@@ -1,9 +1,10 @@
 ## PageTurner
-This is a set of scripts around FFMPEG that I use to convert audiobooks from mp3 to m4b.
+This is a set of scripts around FFMPEG that I am using to convert audio-books from mp3 to m4b.
 
 ### Requirements
 
-- FFMPEG
+- ffmpeg
+- ffprobe
 - Bash
 - Go
 
