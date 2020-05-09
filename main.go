@@ -39,33 +39,32 @@ func main() {
 	convert()
 	log.Println("Generating metadata file")
 	generateFFMETA()
+	log.Println("Searching for cover")
+	resolveCover()
 	log.Println("Merging files with metadata")
 	merge()
 }
 
-func merge() {
-	command := exec.Command(mergeScript)
-	bb := bytes.Buffer{}
-	command.Stdout = &bb
-	command.Stderr = &bb
-	wd, _ := os.Getwd()
-	command.Dir = wd
-	err := command.Run()
-	if err != nil {
-		err2 := writeOutputToFile(bb)
-		log.Fatal(err, err2)
-	}
-}
-
 const convertScript = "page_turner_convert.sh"
+
 const mergeScript = "page_turner_merge.sh"
 
 // TODO : detect best bitrate
 const bitrateKb = 128
 
+func merge() {
+	runScript(mergeScript, nil)
+}
+
 func convert() {
-	command := exec.Command(convertScript)
-	command.Env = append(os.Environ(), fmt.Sprintf("BITRATE=%dk", bitrateKb))
+	runScript(convertScript, []string{fmt.Sprintf("BITRATE=%dk", bitrateKb)})
+}
+
+func runScript(script string, env []string) {
+	command := exec.Command(script)
+	for _, e := range env {
+		command.Env = append(os.Environ(), e)
+	}
 	bb := bytes.Buffer{}
 	command.Stdout = &bb
 	command.Stderr = &bb
@@ -240,4 +239,40 @@ func closeDeferred(file *os.File) {
 			log.Println("WARN : error closing file ", file.Name(), err)
 		}
 	}
+}
+
+const defaultCover = "default_cover.png"
+
+func resolveCover() string {
+	if name := findCover(); name != "" {
+		return name
+	}
+	if name := extractCover(); name != "" {
+		return name
+	}
+	return defaultCover
+}
+
+const coverScript = "page_turner_cover.sh"
+
+const extractedCoverName = "cover.jpg"
+
+func extractCover() string {
+	runScript(coverScript, nil)
+	return extractedCoverName
+}
+
+func findCover() string {
+	for _, candidate := range []string{
+		"cover.jpg",
+		"Cover.jpg",
+		"cover.png",
+		"Cover.png",
+	} {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			continue
+		}
+		return candidate
+	}
+	return ""
 }
