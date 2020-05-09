@@ -43,6 +43,13 @@ func main() {
 	resolveCover()
 	log.Println("Merging files with metadata")
 	merge()
+	cleanup()
+}
+
+const cleanupScript = "page_turner_cleanup.sh"
+
+func cleanup() {
+	runScript(cleanupScript, nil)
 }
 
 const convertScript = "page_turner_convert.sh"
