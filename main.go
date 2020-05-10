@@ -43,6 +43,7 @@ func main() {
 	resolveCover()
 	log.Println("Merging files with metadata")
 	merge()
+	log.Println("Cleaning up")
 	cleanup()
 }
 
@@ -143,7 +144,7 @@ func generateFFMETA() {
 		var ok bool
 		if title, ok = chapterTags["format.title"]; !ok {
 			if title, ok = chapterTags["format.filename"]; ok {
-				title = title[1 : len(title)-1]
+				title = cutOffExtension(dequote(title))
 			} else {
 				title = fmt.Sprintf("%04d", counter)
 			}
@@ -172,6 +173,14 @@ func generateFFMETA() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func cutOffExtension(filename string) string {
+	lastDotIndex := strings.LastIndex(filename, ".")
+	if lastDotIndex == -1 {
+		return filename
+	}
+	return filename[0:lastDotIndex]
 }
 
 func listFiles() []string {
@@ -204,10 +213,21 @@ func toCommonTagMap(tagLines []string) map[string]string {
 			if len(split) < 2 {
 				continue
 			}
-			result[split[0][len(prefix):]] = split[1]
+			result[split[0][len(prefix):]] = dequote(split[1])
 		}
 	}
 	return result
+}
+
+func dequote(s string) string {
+	const dquote = '"'
+	l := len(s)
+	if l >= 2 {
+		if s[0] == dquote && s[l-1] == dquote {
+			return s[1 : l-1]
+		}
+	}
+	return s
 }
 
 func toFullTagMap(tagLines []string) map[string]string {
