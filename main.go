@@ -38,11 +38,11 @@ func main() {
 	log.Println("Converting files")
 	convert()
 	log.Println("Generating metadata file")
-	generateFFMETA()
+	outFilename := generateFFMETA()
 	log.Println("Searching for cover")
 	resolveCover()
 	log.Println("Merging files with metadata")
-	merge()
+	merge(outFilename)
 	log.Println("Cleaning up")
 	cleanup()
 }
@@ -60,8 +60,8 @@ const mergeScript = "page_turner_merge.sh"
 // TODO : detect best bitrate
 const bitrateKb = 128
 
-func merge() {
-	runScript(mergeScript, nil)
+func merge(filename string) {
+	runScript(mergeScript, []string{fmt.Sprintf("OUT_NAME=%s", filename)})
 }
 
 func convert() {
@@ -103,11 +103,10 @@ func writeOutputToFile(bb bytes.Buffer) error {
 	return nil
 }
 
-func generateFFMETA() {
+func generateFFMETA() (filename string) {
 	files := listFiles()
 	if len(files) == 0 {
-		fmt.Println("no m4a files found, check conversion results")
-		return
+		log.Fatal("no m4a files found, check conversion results")
 	}
 
 	tagLines, err := getTagLines(files[0])
@@ -115,7 +114,8 @@ func generateFFMETA() {
 		log.Fatal(err)
 	}
 	commonTags := toCommonTagMap(tagLines)
-
+	var artist string = commonTags["artist"]
+	var album string = commonTags["album"]
 	type track struct {
 		Title string
 		Start int
@@ -173,6 +173,7 @@ func generateFFMETA() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	return fmt.Sprintf("%s - %s.m4b", artist, album)
 }
 
 func cutOffExtension(filename string) string {
