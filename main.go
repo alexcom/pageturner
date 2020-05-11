@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -32,25 +33,36 @@ const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
 func main() {
 	pathEnv := os.Getenv("PATH")
-	if err := os.Setenv("PATH", fmt.Sprintf("%s:.", pathEnv)); err != nil {
+	var err error
+	if err = os.Setenv("PATH", fmt.Sprintf("%s:.", pathEnv)); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Converting files")
-	convert()
+	if err = convert(); err != nil {
+		log.Fatal(err)
+	}
 	log.Println("Generating metadata file")
-	outFilename := generateFFMETA()
+	outFilename, err := generateFFMETA()
+	if err != nil {
+		log.Fatal(err)
+	}
 	log.Println("Searching for cover")
-	resolveCover()
+	cover := resolveCover()
 	log.Println("Merging files with metadata")
-	merge(outFilename)
+	if err = merge(outFilename, cover); err != nil {
+		log.Fatal(err)
+	}
 	log.Println("Cleaning up")
-	cleanup()
+	err = cleanup()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 const cleanupScript = "page_turner_cleanup.sh"
 
-func cleanup() {
-	runScript(cleanupScript, nil)
+func cleanup() error {
+	return runScript(cleanupScript, nil)
 }
 
 const convertScript = "page_turner_convert.sh"
@@ -60,15 +72,18 @@ const mergeScript = "page_turner_merge.sh"
 // TODO : detect best bitrate
 const bitrateKb = 128
 
-func merge(filename string) {
-	runScript(mergeScript, []string{fmt.Sprintf("OUT_NAME=%s", filename)})
+func merge(filename, cover string) error {
+	return runScript(mergeScript, []string{
+		fmt.Sprintf("OUT_NAME=%s", filename),
+		fmt.Sprintf("COVER_NAME=%s", cover),
+	})
 }
 
-func convert() {
-	runScript(convertScript, []string{fmt.Sprintf("BITRATE=%dk", bitrateKb)})
+func convert() error {
+	return runScript(convertScript, []string{fmt.Sprintf("BITRATE=%dk", bitrateKb)})
 }
 
-func runScript(script string, env []string) {
+func runScript(script string, env []string) (err error) {
 	command := exec.Command(script)
 	for _, e := range env {
 		command.Env = append(os.Environ(), e)
@@ -78,11 +93,13 @@ func runScript(script string, env []string) {
 	command.Stderr = &bb
 	wd, _ := os.Getwd()
 	command.Dir = wd
-	err := command.Run()
+	err = command.Run()
 	if err != nil {
 		err2 := writeOutputToFile(bb)
-		log.Fatal(err, err2)
+		log.Println(err2)
+		return err
 	}
+	return nil
 }
 
 func writeOutputToFile(bb bytes.Buffer) error {
@@ -103,19 +120,19 @@ func writeOutputToFile(bb bytes.Buffer) error {
 	return nil
 }
 
-func generateFFMETA() (filename string) {
+func generateFFMETA() (filename string, err error) {
 	files := listFiles()
 	if len(files) == 0 {
-		log.Fatal("no m4a files found, check conversion results")
+		return "", errors.New("no m4a files found, check conversion results")
 	}
 
 	tagLines, err := getTagLines(files[0])
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	commonTags := toCommonTagMap(tagLines)
-	var artist string = commonTags["artist"]
-	var album string = commonTags["album"]
+	var artist = commonTags["artist"]
+	var album = commonTags["album"]
 	type track struct {
 		Title string
 		Start int
@@ -128,7 +145,7 @@ func generateFFMETA() (filename string) {
 	for counter, file := range files {
 		tagLines, err := getTagLines(file)
 		if err != nil {
-			log.Fatal(err)
+			return "", err
 		}
 		chapterTags := toFullTagMap(tagLines)
 		durationString := chapterTags["format.duration"]
@@ -136,7 +153,7 @@ func generateFFMETA() (filename string) {
 		durationString = strings.Replace(durationString, ".", "", 1)
 		subsec, err := strconv.Atoi(durationString)
 		if err != nil {
-			log.Fatal(err)
+			return "", err
 		}
 		start = end
 		end = start + subsec
@@ -166,14 +183,14 @@ func generateFFMETA() (filename string) {
 	tt := template.Must(template.New("ffmetadata").Parse(ffmetadataTemplate))
 	file, err := os.OpenFile("FFMETA", newFileMode, 0644)
 	if err != nil {
-		log.Fatal("ERROR : opening FFMETA for writing", err)
+		return "", err
 	}
 	defer closeDeferred(file)
 	err = tt.Execute(file, data)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	return fmt.Sprintf("%s - %s.m4b", artist, album)
+	return fmt.Sprintf("%s - %s.m4b", artist, album), nil
 }
 
 func cutOffExtension(filename string) string {
