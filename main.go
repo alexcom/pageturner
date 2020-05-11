@@ -31,6 +31,7 @@ title={{ $track.Title }}
 `
 const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
+//go:generate go-bindata -pkg main -o bindata.go data/
 func main() {
 	pathEnv := os.Getenv("PATH")
 	var err error
@@ -61,16 +62,16 @@ func main() {
 
 const cleanupScript = "page_turner_cleanup.sh"
 
-func cleanup() error {
-	return runScript(cleanupScript, nil)
-}
-
 const convertScript = "page_turner_convert.sh"
 
 const mergeScript = "page_turner_merge.sh"
 
 // TODO : detect best bitrate
 const bitrateKb = 128
+
+func convert() error {
+	return runScript(convertScript, []string{fmt.Sprintf("BITRATE=%dk", bitrateKb)})
+}
 
 func merge(filename, cover string) error {
 	return runScript(mergeScript, []string{
@@ -79,8 +80,8 @@ func merge(filename, cover string) error {
 	})
 }
 
-func convert() error {
-	return runScript(convertScript, []string{fmt.Sprintf("BITRATE=%dk", bitrateKb)})
+func cleanup() error {
+	return runScript(cleanupScript, nil)
 }
 
 func runScript(script string, env []string) (err error) {
@@ -295,6 +296,14 @@ func resolveCover() string {
 	if name := extractCover(); name != "" {
 		return name
 	}
+	data, err := Asset("data/" + defaultCover)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ioutil.WriteFile(defaultCover, data, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 	return defaultCover
 }
 
@@ -303,7 +312,12 @@ const coverScript = "page_turner_cover.sh"
 const extractedCoverName = "cover.jpg"
 
 func extractCover() string {
-	runScript(coverScript, nil)
+	err := runScript(coverScript, nil)
+	if err != nil {
+		// assuming we will use default cover, so no fatality
+		log.Println(err)
+		return ""
+	}
 	return extractedCoverName
 }
 

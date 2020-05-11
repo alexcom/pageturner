@@ -1,5 +1,6 @@
 pageturner :
-	go build -o pageturner main.go
+	go generate
+	go build -o pageturner
 
 .PHONY : clean
 clean :
