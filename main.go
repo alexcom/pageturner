@@ -86,8 +86,9 @@ func cleanup() error {
 
 func runScript(script string, env []string) (err error) {
 	command := exec.Command(script)
+	command.Env = os.Environ()
 	for _, e := range env {
-		command.Env = append(os.Environ(), e)
+		command.Env = append(command.Env, e)
 	}
 	bb := bytes.Buffer{}
 	command.Stdout = &bb
