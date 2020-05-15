@@ -22,6 +22,4 @@ Or
 1. Make sure you have prerequisites installed
 2. Build and execute
 
-
-
-    make install
+        make install
