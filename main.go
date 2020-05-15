@@ -60,8 +60,6 @@ func main() {
 	}
 }
 
-const cleanupScript = "page_turner_cleanup.sh"
-
 const convertScript = "page_turner_convert.sh"
 
 const mergeScript = "page_turner_merge.sh"
@@ -81,7 +79,23 @@ func merge(filename, cover string) error {
 }
 
 func cleanup() error {
-	return runScript(cleanupScript, nil)
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	files, err := ioutil.ReadDir(wd)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !f.IsDir() && (strings.HasSuffix(f.Name(), ".m4a") || f.Name() == metadataFileName) {
+			err = os.Remove(f.Name())
+			if err != nil {
+				log.Println("WARN", err)
+			}
+		}
+	}
+	return nil
 }
 
 func runScript(script string, env []string) (err error) {
@@ -97,14 +111,13 @@ func runScript(script string, env []string) (err error) {
 	command.Dir = wd
 	err = command.Run()
 	if err != nil {
-		err2 := writeOutputToFile(bb)
-		log.Println(err2)
+		writeOutputToFile(bb)
 		return err
 	}
 	return nil
 }
 
-func writeOutputToFile(bb bytes.Buffer) error {
+func writeOutputToFile(bb bytes.Buffer) {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
@@ -112,15 +125,16 @@ func writeOutputToFile(bb bytes.Buffer) error {
 	filename := filepath.Join(wd, fmt.Sprintf("fail-%s.log", time.Now().Format("2006-01-02_15:04:05")))
 	file, err := os.OpenFile(filename, newFileMode, 0644)
 	if err != nil {
-		return err
+		fmt.Println(err)
 	}
 	defer closeDeferred(file)
 	_, err = bb.WriteTo(file)
 	if err != nil {
-		return err
+		fmt.Println(err)
 	}
-	return nil
 }
+
+const metadataFileName = "FFMETA"
 
 func generateFFMETA() (filename string, err error) {
 	files := listFiles()
@@ -183,7 +197,7 @@ func generateFFMETA() (filename string, err error) {
 		CommonMeta: commonTags,
 	}
 	tt := template.Must(template.New("ffmetadata").Parse(ffmetadataTemplate))
-	file, err := os.OpenFile("FFMETA", newFileMode, 0644)
+	file, err := os.OpenFile(metadataFileName, newFileMode, 0644)
 	if err != nil {
 		return "", err
 	}
