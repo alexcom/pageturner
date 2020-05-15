@@ -1,5 +1,5 @@
 ## PageTurner
-This is a set of scripts around FFMPEG that I am using to convert audio-books from mp3 to m4b.
+This is a tool written in Go and a set of Bash scripts around FFMPEG that I am using to convert audio-books from mp3 to m4b.
 
 ### Requirements
 
@@ -8,3 +8,18 @@ This is a set of scripts around FFMPEG that I am using to convert audio-books fr
 - Bash
 - Go
 
+### Building
+
+    make
+
+Or
+
+    go generate
+    go build
+
+### Installing on Linux and Mac
+
+1. Make sure you have prerequisites installed
+2. Build and execute
+
+        make install
