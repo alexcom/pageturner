@@ -4,7 +4,7 @@ pageturner :
 
 .PHONY : clean
 clean :
-	rm pageturner
+	rm pageturner || true
 
 .PHONY : install
 install :
@@ -13,4 +13,5 @@ install :
 
 .PHONY : clean_obsolete
 clean_obsolete :
-	rm /usr/local/bin/page_turner_cleanup.sh
+	rm /usr/local/bin/page_turner_cleanup.sh || true
+	rm /usr/local/bin/page_turner_convert.sh || true
