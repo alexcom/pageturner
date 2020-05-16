@@ -42,14 +42,15 @@ func parallelConvert() error {
 	wg := sync.WaitGroup{}
 	wg.Add(len(files))
 
-	for i := 0; i < runtime.NumCPU(); i++ {
+	var threads = runtime.NumCPU() //+ runtime.NumCPU()/2
+	for i := 0; i < threads; i++ {
 		go func(in <-chan string) {
 			for filename := range in {
 				err := runScriptArgs(ffmpeg, makeArgs(filename), nil)
 				if err != nil {
 					errCh <- err
 				} else {
-					log.Print("converted", filename)
+					log.Println("converted", filename)
 				}
 				wg.Done()
 			}
