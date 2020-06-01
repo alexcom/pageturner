@@ -5,6 +5,7 @@ pageturner :
 .PHONY : clean
 clean :
 	rm pageturner || true
+	rm bindata.go || true
 
 .PHONY : install
 install :
