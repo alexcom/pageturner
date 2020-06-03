@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 )
 
@@ -30,57 +33,86 @@ title={{ $track.Title }}
 
 const metadataFileName = "FFMETA"
 
+type track struct {
+	Title string
+	Start int
+	End   int
+}
+
+type container struct {
+	Format format `json:"format"`
+}
+
+type format struct {
+	Filename  string `json:"filename"`
+	StartTime string `json:"start_time"`
+	Duration  string `json:"duration"`
+	Tags      struct {
+		Album  string `json:"album"`
+		Genre  string `json:"genre"`
+		Title  string `json:"title"`
+		Artist string `json:"artist"`
+		Disc   string `json:"disc"`
+		Track  string `json:"track"`
+	} `json:"tags"`
+}
+
+type tagsContainer struct {
+	Format struct {
+		Tags map[string]string `json:"tags"`
+	} `json:"format"`
+}
+
 func generateFFMETA() (filename string, err error) {
-	files := listFiles()
+	files := listM4AFiles()
 	if len(files) == 0 {
-		return "", errors.New("no m4a files found, check conversion results")
+		return "", errors.New("no m4a files found, check conversion results and error logs")
 	}
+	wg := sync.WaitGroup{}
+	wg.Add(len(files))
+	var threads = runtime.NumCPU() + 1
+	inCh := make(chan string)
+	outCh := make(chan bytes.Buffer)
+	for i := 0; i < threads; i++ {
+		go func(input chan string, output chan bytes.Buffer) {
+			for filename := range input {
+				bb, err := getMetaJsonBytes(filename)
+				if err != nil {
+					log.Println("ERROR", err)
+				}
+				outCh <- bb
+				wg.Done()
+			}
+		}(inCh, outCh)
+	}
+	for _, file := range files {
+		inCh <- file
+	}
+	close(inCh)
+	wg.Wait()
 
-	tagLines, err := getTagLines(files[0])
-	if err != nil {
-		return "", err
-	}
-	commonTags := toCommonTagMap(tagLines)
-	var artist = commonTags["artist"]
-	var album = commonTags["album"]
-	type track struct {
-		Title string
-		Start int
-		End   int
-	}
-
-	tracks := make([]track, 0)
 	var start = 0
 	var end = 0
-	for counter, file := range files {
-		tagLines, err := getTagLines(file)
-		if err != nil {
-			return "", err
-		}
-		chapterTags := toFullTagMap(tagLines)
-		durationString := chapterTags["format.duration"]
-		durationString = durationString[1 : len(durationString)-4] //remove dquotes
-		durationString = strings.Replace(durationString, ".", "", 1)
-		subsec, err := strconv.Atoi(durationString)
-		if err != nil {
-			return "", err
-		}
-		start = end
-		end = start + subsec
-		var title string
-		var ok bool
-		if title, ok = chapterTags["format.title"]; !ok {
-			if title, ok = chapterTags["format.filename"]; ok {
-				title = cutOffExtension(dequote(title))
-			} else {
-				title = fmt.Sprintf("%04d", counter)
+	tracks := make([]track, 0)
+	var counter = 0
+	tagBag := tagsContainer{}
+	var fileMeta container
+	for metaJsonBytes := range outCh {
+		if counter == 0 {
+			err = json.Unmarshal(metaJsonBytes.Bytes(), &tagBag)
+			if err != nil {
+				return
 			}
 		}
-		tracks = append(tracks, track{
-			Title: title,
-			Start: start,
-			End:   end,
-		})
+		if err = json.Unmarshal(metaJsonBytes.Bytes(), &fileMeta); err != nil {
+			return
+		}
+		if start, end, err = parseAppendDuration(start, end, fileMeta.Format.Duration); err != nil {
+			return
+		}
+		title := selectTitle(fileMeta.Format, counter)
+		counter++
+		tracks = append(tracks, track{title, start, end})
 	}
 
 	data := struct {
@@ -88,7 +120,7 @@ func generateFFMETA() (filename string, err error) {
 		CommonMeta map[string]string
 	}{
 		Chapters:   tracks,
-		CommonMeta: commonTags,
+		CommonMeta: tagBag.Format.Tags,
 	}
 	tt := template.Must(template.New("ffmetadata").Parse(ffmetadataTemplate))
 	file, err := os.OpenFile(metadataFileName, newFileMode, 0644)
@@ -100,7 +132,28 @@ func generateFFMETA() (filename string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s - %s.m4b", artist, album), nil
+	return fmt.Sprintf("%s - %s.m4b", fileMeta.Format.Tags.Artist, fileMeta.Format.Tags.Album), nil
+}
+
+func selectTitle(meta format, counter int) (title string) {
+	if title := meta.Tags.Title; title == "" {
+		if title = meta.Filename; title != "" {
+			title = cutOffExtension(title)
+		} else {
+			title = fmt.Sprintf("%04d", counter)
+		}
+	}
+	return
+}
+
+func parseAppendDuration(start, end int, durationString string) (rStart int, rEnd int, err error) {
+	durationString = durationString[:len(durationString)-3] // trimming trailing zeroes
+	durationString = strings.Replace(durationString, ".", "", 1)
+	subsec, err := strconv.Atoi(durationString)
+	if err != nil {
+		return 0, 0, err
+	}
+	return end, start + subsec, nil
 }
 
 func cutOffExtension(filename string) string {
@@ -111,7 +164,7 @@ func cutOffExtension(filename string) string {
 	return filename[0:lastDotIndex]
 }
 
-func listFiles() []string {
+func listM4AFiles() []string {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
@@ -132,57 +185,14 @@ func listFiles() []string {
 	return result
 }
 
-func toCommonTagMap(tagLines []string) map[string]string {
-	result := map[string]string{}
-	const prefix = "format.tags."
-	for _, line := range tagLines {
-		if strings.HasPrefix(line, prefix) {
-			split := strings.Split(line, "=")
-			if len(split) < 2 {
-				continue
-			}
-			result[split[0][len(prefix):]] = dequote(split[1])
-		}
-	}
-	return result
-}
-
-func dequote(s string) string {
-	const dquote = '"'
-	l := len(s)
-	if l >= 2 {
-		if s[0] == dquote && s[l-1] == dquote {
-			return s[1 : l-1]
-		}
-	}
-	return s
-}
-
-func toFullTagMap(tagLines []string) map[string]string {
-	result := map[string]string{}
-	for _, line := range tagLines {
-		split := strings.Split(line, "=")
-		if len(split) < 2 {
-			continue
-		}
-		result[split[0]] = split[1]
-	}
-	return result
-}
-
-func getTagLines(filename string) ([]string, error) {
-	// add file name as last argument
-	const command = "ffprobe -hide_banner -of flat -v quiet -show_entries format:tags=album,artist,album_artist,title,comment"
-	commandArr := strings.FieldsFunc(command, func(a rune) bool {
+func getMetaJsonBytes(filename string) (c bytes.Buffer, err error) {
+	const commandStart = "ffprobe -hide_banner -of json -v quiet -show_entries format"
+	commandArr := strings.FieldsFunc(commandStart, func(a rune) bool {
 		return a == ' '
 	})
 	cmd := exec.Command(commandArr[0], append(commandArr[1:], filename)...)
 	bb := bytes.Buffer{}
 	cmd.Stdout = &bb
-	err := cmd.Run()
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(bb.String(), "\n")
-	return lines, nil
+	err = cmd.Run()
+	return
 }
