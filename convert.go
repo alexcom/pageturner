@@ -42,7 +42,7 @@ func parallelConvert() error {
 	wg := sync.WaitGroup{}
 	wg.Add(len(files))
 
-	var threads = runtime.NumCPU() //+ runtime.NumCPU()/2
+	var threads = runtime.NumCPU() + 1 //+ runtime.NumCPU()/2
 	for i := 0; i < threads; i++ {
 		go func(in <-chan string) {
 			for filename := range in {
