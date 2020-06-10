@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,22 +66,27 @@ type tagsContainer struct {
 
 func generateFFMETA() (filename string, err error) {
 	files := listM4AFiles()
-	if len(files) == 0 {
+	fileCount := len(files)
+	if fileCount == 0 {
 		return "", errors.New("no m4a files found, check conversion results and error logs")
 	}
 	wg := sync.WaitGroup{}
-	wg.Add(len(files))
+	wg.Add(fileCount)
 	var threads = runtime.NumCPU() + 1
+	if threads > fileCount {
+		threads = fileCount
+	}
 	inCh := make(chan string)
-	outCh := make(chan bytes.Buffer)
+	outCh := make(chan bytes.Buffer, len(files))
 	for i := 0; i < threads; i++ {
-		go func(input chan string, output chan bytes.Buffer) {
+		go func(input <-chan string, output chan<- bytes.Buffer) {
 			for filename := range input {
 				bb, err := getMetaJsonBytes(filename)
 				if err != nil {
 					log.Println("ERROR", err)
+				} else {
+					outCh <- bb
 				}
-				outCh <- bb
 				wg.Done()
 			}
 		}(inCh, outCh)
@@ -90,13 +96,11 @@ func generateFFMETA() (filename string, err error) {
 	}
 	close(inCh)
 	wg.Wait()
+	close(outCh)
 
-	var start = 0
-	var end = 0
-	tracks := make([]track, 0)
 	var counter = 0
 	tagBag := tagsContainer{}
-	var fileMeta container
+	metaList := make([]container, fileCount)
 	for metaJsonBytes := range outCh {
 		if counter == 0 {
 			err = json.Unmarshal(metaJsonBytes.Bytes(), &tagBag)
@@ -104,17 +108,19 @@ func generateFFMETA() (filename string, err error) {
 				return
 			}
 		}
+		var fileMeta container
 		if err = json.Unmarshal(metaJsonBytes.Bytes(), &fileMeta); err != nil {
 			return
 		}
-		if start, end, err = parseAppendDuration(start, end, fileMeta.Format.Duration); err != nil {
-			return
-		}
-		title := selectTitle(fileMeta.Format, counter)
+		metaList[counter] = fileMeta
 		counter++
-		tracks = append(tracks, track{title, start, end})
 	}
-
+	sortByFilename(metaList)
+	tracks, err := computeTracks(metaList)
+	if err != nil {
+		return
+	}
+	dropUnneededTags(&tagBag)
 	data := struct {
 		Chapters   []track
 		CommonMeta map[string]string
@@ -132,11 +138,35 @@ func generateFFMETA() (filename string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s - %s.m4b", fileMeta.Format.Tags.Artist, fileMeta.Format.Tags.Album), nil
+	return fmt.Sprintf("%s - %s.m4b", tagBag.Format.Tags["artist"], tagBag.Format.Tags["album"]), nil
+}
+
+func computeTracks(metaList []container) (tracks []track, err error) {
+	var start, end = 0, 0
+	tracks = make([]track, len(metaList))
+	for index, fileMeta := range metaList {
+		if start, end, err = parseAppendDuration(end, fileMeta.Format.Duration); err != nil {
+			return
+		}
+		title := selectTitle(fileMeta.Format, index)
+		tracks[index] = track{title, start, end}
+	}
+	return
+}
+
+func sortByFilename(metaList []container) {
+	sort.Slice(metaList, func(i, j int) bool {
+		return metaList[i].Format.Filename < metaList[j].Format.Filename
+	})
+}
+
+func dropUnneededTags(tagBag *tagsContainer) {
+	delete(tagBag.Format.Tags, "title")
+	delete(tagBag.Format.Tags, "track")
 }
 
 func selectTitle(meta format, counter int) (title string) {
-	if title := meta.Tags.Title; title == "" {
+	if title = meta.Tags.Title; title == "" {
 		if title = meta.Filename; title != "" {
 			title = cutOffExtension(title)
 		} else {
@@ -146,14 +176,14 @@ func selectTitle(meta format, counter int) (title string) {
 	return
 }
 
-func parseAppendDuration(start, end int, durationString string) (rStart int, rEnd int, err error) {
+func parseAppendDuration(prevEnd int, durationString string) (rStart int, rEnd int, err error) {
 	durationString = durationString[:len(durationString)-3] // trimming trailing zeroes
 	durationString = strings.Replace(durationString, ".", "", 1)
 	subsec, err := strconv.Atoi(durationString)
 	if err != nil {
 		return 0, 0, err
 	}
-	return end, start + subsec, nil
+	return prevEnd, prevEnd + subsec, nil
 }
 
 func cutOffExtension(filename string) string {
@@ -185,13 +215,13 @@ func listM4AFiles() []string {
 	return result
 }
 
-func getMetaJsonBytes(filename string) (c bytes.Buffer, err error) {
+func getMetaJsonBytes(filename string) (bb bytes.Buffer, err error) {
+	log.Println("extracting meta from", filename)
 	const commandStart = "ffprobe -hide_banner -of json -v quiet -show_entries format"
 	commandArr := strings.FieldsFunc(commandStart, func(a rune) bool {
 		return a == ' '
 	})
 	cmd := exec.Command(commandArr[0], append(commandArr[1:], filename)...)
-	bb := bytes.Buffer{}
 	cmd.Stdout = &bb
 	err = cmd.Run()
 	return
