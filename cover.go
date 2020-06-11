@@ -26,14 +26,19 @@ func resolveCover() string {
 	return defaultCover
 }
 
-const coverScript = "page_turner_cover.sh"
 const extractedCoverName = "cover.jpg"
 
 func extractCover() string {
-	err := runScript(coverScript, nil)
+	mp3s := listFilesByExt(".mp3")
+	if len(mp3s) == 0 {
+		log.Println("WARN no mp3 files to extract cover from")
+		return ""
+	}
+	script := []string{ffmpeg, confirm, input, mp3s[0], mapping, "0:v", mapping, "-0:V", extractedCoverName}
+	err := runScriptArgs(script[0], script[1:], nil)
 	if err != nil {
 		// assuming we will use default cover, so no fatality
-		log.Println(err)
+		log.Println("WARN", err)
 		return ""
 	}
 	return extractedCoverName

@@ -16,3 +16,4 @@ install :
 clean_obsolete :
 	rm /usr/local/bin/page_turner_cleanup.sh || true
 	rm /usr/local/bin/page_turner_convert.sh || true
+	rm /usr/local/bin/page_turner_cover.sh || true
