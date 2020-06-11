@@ -65,7 +65,7 @@ type tagsContainer struct {
 }
 
 func generateFFMETA() (filename string, err error) {
-	files := listM4AFiles()
+	files := listFilesByExt(".m4a")
 	fileCount := len(files)
 	if fileCount == 0 {
 		return "", errors.New("no m4a files found, check conversion results and error logs")
@@ -194,7 +194,7 @@ func cutOffExtension(filename string) string {
 	return filename[0:lastDotIndex]
 }
 
-func listM4AFiles() []string {
+func listFilesByExt(ext string) []string {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
@@ -208,7 +208,7 @@ func listM4AFiles() []string {
 		if file.IsDir() {
 			continue
 		}
-		if strings.HasSuffix(file.Name(), ".m4a") {
+		if strings.HasSuffix(file.Name(), ext) {
 			result = append(result, file.Name())
 		}
 	}
