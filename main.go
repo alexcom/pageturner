@@ -39,17 +39,8 @@ func main() {
 	}
 }
 
-const mergeScript = "page_turner_merge.sh"
-
 // TODO : detect best bitrate
 const bitrateKb = 128
-
-func merge(filename, cover string) error {
-	return runScript(mergeScript, []string{
-		fmt.Sprintf("OUT_NAME=%s", filename),
-		fmt.Sprintf("COVER_NAME=%s", cover),
-	})
-}
 
 func cleanup() error {
 	wd, err := os.Getwd()
