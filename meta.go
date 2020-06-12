@@ -120,7 +120,7 @@ func generateFFMETA() (filename string, err error) {
 	if err != nil {
 		return
 	}
-	dropUnneededTags(&tagBag)
+	keepWhitelistedTags(&tagBag)
 	data := struct {
 		Chapters   []track
 		CommonMeta map[string]string
@@ -160,9 +160,22 @@ func sortByFilename(metaList []container) {
 	})
 }
 
-func dropUnneededTags(tagBag *tagsContainer) {
-	delete(tagBag.Format.Tags, "title")
-	delete(tagBag.Format.Tags, "track")
+func keepWhitelistedTags(tagBag *tagsContainer) {
+	whitelist := map[string]bool{
+		"album":     true,
+		"genre":     true,
+		"title":     true,
+		"artist":    true,
+		"disk":      true,
+		"track":     true,
+		"date":      true,
+		"performer": true,
+	}
+	for key := range tagBag.Format.Tags {
+		if _, ok := whitelist[key]; !ok {
+			delete(tagBag.Format.Tags, key)
+		}
+	}
 }
 
 func selectTitle(meta format, counter int) (title string) {
