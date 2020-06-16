@@ -39,9 +39,6 @@ func main() {
 	}
 }
 
-// TODO : detect best bitrate
-const bitrateKb = 128
-
 func cleanup() error {
 	wd, err := os.Getwd()
 	if err != nil {

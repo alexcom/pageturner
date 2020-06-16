@@ -9,12 +9,18 @@ import (
 	"path/filepath"
 )
 
-const format_ = "-f"
-const concat = "concat"
-const threadQueueSize = "-thread_queue_size"
-const safe = "-safe"
-const mapMeta = "-map_metadata"
-const codec = "-c"
+const (
+	format_         = "-f"
+	concat          = "concat"
+	threadQueueSize = "-thread_queue_size"
+	safe            = "-safe"
+	mapMeta         = "-map_metadata"
+	codec           = "-c"
+	codecCopy       = "codec_copy"
+	dispositionV0   = "-disposition:v:0"
+	attachedPic     = "attached_pic"
+)
+const fileListFileName = "filelist.txt"
 
 func merge(filename, cover string) (err error) {
 	listFileName, err := generateMergeFileList()
@@ -45,8 +51,6 @@ func merge(filename, cover string) (err error) {
 	}
 	return runScriptArgs(script[0], script[1:], nil)
 }
-
-const fileListFileName = "filelist.txt"
 
 func generateMergeFileList() (filename string, err error) {
 	files := listFilesByExt(".m4a")

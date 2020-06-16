@@ -10,16 +10,21 @@ import (
 	"sync"
 )
 
-const ffmpeg = "ffmpeg"
-const confirm = "-y"
-const input = "-i"
-const mapping = "-map"
-const mapIndex = "0:a"
-const audioCodec = "-c:a"
-const aac = "aac"
-const bitrate = "-b:a"
-const brFmt = "%dk"
-const outputFmt = "%s.m4a"
+// TODO : detect best bitrate
+const bitrateKb = 128
+
+const (
+	ffmpeg     = "ffmpeg"
+	confirm    = "-y"
+	input      = "-i"
+	mapping    = "-map"
+	mapIndex   = "0:a"
+	audioCodec = "-c:a"
+	aac        = "aac"
+	bitrate    = "-b:a"
+	brFmt      = "%dk"
+	outputFmt  = "%s.m4a"
+)
 
 func parallelConvert() error {
 	wd, err := os.Getwd()
