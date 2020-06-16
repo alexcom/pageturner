@@ -15,7 +15,7 @@ const confirm = "-y"
 const input = "-i"
 const mapping = "-map"
 const mapIndex = "0:a"
-const codec = "-c:a"
+const audioCodec = "-c:a"
 const aac = "aac"
 const bitrate = "-b:a"
 const brFmt = "%dk"
@@ -71,7 +71,7 @@ func makeArgs(filename string) []string {
 		confirm,
 		input, filename,
 		mapping, mapIndex,
-		codec, aac,
+		audioCodec, aac,
 		bitrate, fmt.Sprintf(brFmt, bitrateKb),
 		fmt.Sprintf(outputFmt, filename[:len(filename)-4]),
 	}
