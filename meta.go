@@ -138,7 +138,20 @@ func generateFFMETA() (filename string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s - %s.m4b", tagBag.Format.Tags["artist"], tagBag.Format.Tags["album"]), nil
+	return outName(tagBag.Format.Tags), nil
+}
+
+func outName(tags map[string]string) string {
+	if artist, ok := tags["artist"]; ok {
+		if album, ok := tags["album"]; ok {
+			return fmt.Sprintf("%s - %s.m4b", artist, album)
+		}
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Panic(err)
+	}
+	return wd
 }
 
 func computeTracks(metaList []container) (tracks []track, err error) {
