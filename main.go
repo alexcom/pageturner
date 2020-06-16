@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -13,13 +12,8 @@ const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 //go:generate go-bindata -pkg main -o bindata.go data/
 func main() {
 	checkPrerequisites()
-
-	pathEnv := os.Getenv("PATH")
-	var err error
-	if err = os.Setenv("PATH", fmt.Sprintf("%s:.", pathEnv)); err != nil {
-		log.Fatal(err)
-	}
 	log.Println("Converting files")
+	var err error
 	if err = parallelConvert(); err != nil {
 		log.Fatal(err)
 	}
