@@ -16,7 +16,7 @@ const (
 	safe            = "-safe"
 	mapMeta         = "-map_metadata"
 	codec           = "-c"
-	codecCopy       = "codec_copy"
+	codecCopy       = "copy"
 	dispositionV0   = "-disposition:v:0"
 	attachedPic     = "attached_pic"
 )
@@ -45,8 +45,8 @@ func merge(filename, cover string) (err error) {
 		mapping, "0",
 		mapping, "1",
 		mapMeta, "2",
-		codec, "copy",
-		"-disposition:v:0", "attached_pic",
+		codec, codecCopy,
+		dispositionV0, attachedPic,
 		filename,
 	}
 	return runScriptArgs(script[0], script[1:], nil)

@@ -2,11 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
-	"os"
 	"runtime"
-	"strings"
 	"sync"
 )
 
@@ -27,27 +24,16 @@ const (
 )
 
 func parallelConvert() error {
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-	files, err := ioutil.ReadDir(wd)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for i := len(files) - 1; i >= 0; i-- {
-		file := files[i]
-		if !strings.HasSuffix(file.Name(), ".mp3") {
-			files = append(files[:i], files[i+1:]...)
-		}
-	}
+	files := listFilesByExt(".mp3")
 	errCh := make(chan error, len(files))
 	in := make(chan string)
 	wg := sync.WaitGroup{}
 	wg.Add(len(files))
 
-	var threads = runtime.NumCPU() + 1 //+ runtime.NumCPU()/2
+	var threads = runtime.NumCPU() + 1
+	if threads > len(files) {
+		threads = len(files)
+	}
 	for i := 0; i < threads; i++ {
 		go func(in <-chan string) {
 			for filename := range in {
@@ -63,7 +49,7 @@ func parallelConvert() error {
 	}
 
 	for _, file := range files {
-		in <- file.Name()
+		in <- file
 	}
 	close(in)
 	wg.Wait()
