@@ -1,12 +1,15 @@
 ## PageTurner
 This is a tool written in Go and a set of Bash scripts around FFMPEG that I am using to convert audio-books from mp3 to m4b.
 
-### Requirements
+### Build requirements
+
+- go-bindata
+- Go 1.13
+
+### Run requirements
 
 - ffmpeg
 - ffprobe
-- go-bindata
-- Go
 
 ### Building
 
