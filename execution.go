@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-func runScript(script string, env []string) (err error) {
-	return runScriptArgs(script, nil, env)
-}
-
 func runScriptArgs(script string, args []string, env []string) (err error) {
 	command := exec.Command(script, args...)
 	command.Env = os.Environ()

@@ -216,7 +216,7 @@ func listFilesByExt(ext string) []string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	result := []string{}
+	var result []string
 	for _, file := range dirContent {
 		if file.IsDir() {
 			continue

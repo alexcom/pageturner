@@ -12,6 +12,8 @@ const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
 //go:generate go-bindata -pkg main -o bindata.go data/
 func main() {
+	checkPrerequisites()
+
 	pathEnv := os.Getenv("PATH")
 	var err error
 	if err = os.Setenv("PATH", fmt.Sprintf("%s:.", pathEnv)); err != nil {
@@ -38,9 +40,6 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// TODO : detect best bitrate
-const bitrateKb = 128
 
 func cleanup() error {
 	wd, err := os.Getwd()
