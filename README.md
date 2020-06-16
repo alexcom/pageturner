@@ -5,7 +5,7 @@ This is a tool written in Go and a set of Bash scripts around FFMPEG that I am u
 
 - ffmpeg
 - ffprobe
-- Bash
+- go-bindata
 - Go
 
 ### Building
