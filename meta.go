@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"runtime"
 	"sort"
 	"strconv"
@@ -149,9 +150,11 @@ func outName(tags map[string]string) string {
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Panic(err)
+		log.Print(err)
+		return "book.m4b"
 	}
-	return wd
+
+	return path.Base(wd) + ".m4b"
 }
 
 func computeTracks(metaList []container) (tracks []track, err error) {
