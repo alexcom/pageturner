@@ -1,3 +1,10 @@
+ifneq (,$(findstring synology,$(shell uname -a)))
+	destination := /opt/usr/local/bin
+else
+	destination := /usr/local/bin
+endif
+
+
 pageturner :
 	go generate
 	go build -o pageturner
@@ -9,7 +16,7 @@ clean :
 
 .PHONY : install
 install :
-	cp pageturner /usr/local/bin
+	cp pageturner $(destination)
 
 .PHONY : clean_obsolete
 clean_obsolete :
