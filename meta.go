@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -154,7 +154,7 @@ func outName(tags map[string]string) string {
 		return "book.m4b"
 	}
 
-	return path.Base(wd) + ".m4b"
+	return filepath.Base(wd) + ".m4b"
 }
 
 func computeTracks(metaList []container) (tracks []track, err error) {

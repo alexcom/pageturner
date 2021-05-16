@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"runtime"
@@ -25,6 +26,9 @@ const (
 
 func parallelConvert() error {
 	files := listFilesByExt(".mp3")
+	if len(files) == 0 {
+		return errors.New("no MP3 files discovered in current directory")
+	}
 	errCh := make(chan error, len(files))
 	in := make(chan string)
 	wg := sync.WaitGroup{}

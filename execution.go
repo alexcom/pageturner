@@ -34,7 +34,7 @@ func writeOutputToFile(bb bytes.Buffer) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	filename := filepath.Join(wd, fmt.Sprintf("fail-%s.log", time.Now().Format("2006-01-02_15:04:05")))
+	filename := filepath.Join(wd, fmt.Sprintf("fail-%s.log", time.Now().Format("2006-01-02_15_04_05")))
 	file, err := os.OpenFile(filename, newFileMode, 0644)
 	if err != nil {
 		fmt.Println(err)
