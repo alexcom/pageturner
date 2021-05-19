@@ -9,7 +9,6 @@ import (
 
 const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
-//go:generate go-bindata -pkg main -o bindata.go data/
 func main() {
 	checkPrerequisites()
 	log.Println("Converting files")

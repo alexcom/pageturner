@@ -1,10 +1,14 @@
 package main
 
 import (
+	_ "embed"
 	"io/ioutil"
 	"log"
 	"os"
 )
+
+//go:embed data/default_cover.png
+var defaultCoverBytes []byte
 
 const defaultCover = "default_cover.png"
 
@@ -15,11 +19,10 @@ func resolveCover() string {
 	if name := extractCover(); name != "" {
 		return name
 	}
-	data, err := Asset("data/" + defaultCover)
-	if err != nil {
-		log.Fatal(err)
+	if len(defaultCoverBytes) == 0 {
+		log.Fatal("embedded default cover not found")
 	}
-	err = ioutil.WriteFile(defaultCover, data, 0644)
+	err := ioutil.WriteFile(defaultCover, defaultCoverBytes, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}

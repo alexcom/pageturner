@@ -3,8 +3,7 @@ This is a tool written in Go and a set of Bash scripts around FFMPEG that I am u
 
 ### Build requirements
 
-- go-bindata
-- Go 1.13
+- Go 1.16
 
 ### Run requirements
 
