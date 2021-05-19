@@ -16,7 +16,6 @@ This is a tool written in Go and a set of Bash scripts around FFMPEG that I am u
 
 Or
 
-    go generate
     go build
 
 ### Installing on Linux and Mac
