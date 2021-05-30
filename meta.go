@@ -65,11 +65,12 @@ type tagsContainer struct {
 	} `json:"format"`
 }
 
-func generateFFMETA() (filename string, err error) {
-	files := listFilesByExt(".m4a")
+func readMetadataFromFilesWithExtension(ext string) (_ <-chan bytes.Buffer, err error) {
+	files := listFilesByExt(ext)
 	fileCount := len(files)
 	if fileCount == 0 {
-		return "", errors.New("no m4a files found, check conversion results and error logs")
+		err = errors.New("no " + ext + " files found, check conversion results and error logs")
+		return
 	}
 	wg := sync.WaitGroup{}
 	wg.Add(fileCount)
@@ -98,11 +99,18 @@ func generateFFMETA() (filename string, err error) {
 	close(inCh)
 	wg.Wait()
 	close(outCh)
+	return outCh, nil
+}
 
+func generateFFMETA() (filename string, err error) {
+	fileBytesChan, err := readMetadataFromFilesWithExtension(".m4a")
+	if err != nil {
+		return
+	}
 	var counter = 0
 	tagBag := tagsContainer{}
-	metaList := make([]container, fileCount)
-	for metaJsonBytes := range outCh {
+	metaList := make([]container, 0)
+	for metaJsonBytes := range fileBytesChan {
 		if counter == 0 {
 			err = json.Unmarshal(metaJsonBytes.Bytes(), &tagBag)
 			if err != nil {
@@ -113,15 +121,17 @@ func generateFFMETA() (filename string, err error) {
 		if err = json.Unmarshal(metaJsonBytes.Bytes(), &fileMeta); err != nil {
 			return
 		}
-		metaList[counter] = fileMeta
+		metaList = append(metaList, fileMeta)
 		counter++
 	}
+
 	sortByFilename(metaList)
 	tracks, err := computeTracks(metaList)
 	if err != nil {
 		return
 	}
-	keepWhitelistedTags(&tagBag)
+	removeNonWhitelistedTags(&tagBag)
+	setPredefinedTags(&tagBag)
 	data := struct {
 		Chapters   []track
 		CommonMeta map[string]string
@@ -140,6 +150,10 @@ func generateFFMETA() (filename string, err error) {
 		return "", err
 	}
 	return outName(tagBag.Format.Tags), nil
+}
+
+func setPredefinedTags(t *tagsContainer) {
+	t.Format.Tags["genre"] = "Audiobook" // 183 Winamp style according to Wikipedia
 }
 
 func outName(tags map[string]string) string {
@@ -176,10 +190,10 @@ func sortByFilename(metaList []container) {
 	})
 }
 
-func keepWhitelistedTags(tagBag *tagsContainer) {
+func removeNonWhitelistedTags(tagBag *tagsContainer) {
 	whitelist := map[string]bool{
-		"album":     true,
-		"genre":     true,
+		"album": true,
+		//"genre":     true,
 		"title":     true,
 		"artist":    true,
 		"disk":      true,

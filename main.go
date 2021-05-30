@@ -11,9 +11,11 @@ const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
 func main() {
 	checkPrerequisites()
+	log.Println("Detecting bitrate")
+	bitrate := detectBitrate()
 	log.Println("Converting files")
 	var err error
-	if err = parallelConvert(); err != nil {
+	if err = parallelConvert(bitrate); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Generating metadata file")
@@ -27,11 +29,11 @@ func main() {
 	if err = merge(outFilename, cover); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Cleaning up")
-	err = cleanup()
-	if err != nil {
-		log.Fatal(err)
-	}
+	//log.Println("Cleaning up")
+	//err = cleanup()
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 }
 
 func cleanup() error {
