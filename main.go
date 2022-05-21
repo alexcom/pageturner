@@ -29,11 +29,11 @@ func main() {
 	if err = merge(outFilename, cover); err != nil {
 		log.Fatal(err)
 	}
-	//log.Println("Cleaning up")
-	//err = cleanup()
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
+	log.Println("Cleaning up")
+	err = cleanup()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func cleanup() error {

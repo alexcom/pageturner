@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -59,7 +60,7 @@ func generateMergeFileList() (filename string, err error) {
 		if file, err = filepath.Abs(file); err != nil {
 			return
 		}
-		if _, err = fmt.Fprintf(&bb, "file '%s'\n", file); err != nil {
+		if _, err = fmt.Fprintf(&bb, "file '%s'\n", escapeQuote(file)); err != nil {
 			return
 		}
 	}
@@ -67,4 +68,8 @@ func generateMergeFileList() (filename string, err error) {
 		return
 	}
 	return fileListFileName, nil
+}
+
+func escapeQuote(fn string) string {
+	return strings.ReplaceAll(fn, "'", "'\\''")
 }
