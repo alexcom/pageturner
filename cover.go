@@ -2,9 +2,10 @@ package main
 
 import (
 	_ "embed"
-	"io/ioutil"
 	"log"
 	"os"
+	"slices"
+	"strings"
 )
 
 //go:embed data/default_cover.png
@@ -13,8 +14,10 @@ var defaultCoverBytes []byte
 const defaultCover = "default_cover.png"
 
 func resolveCover() string {
-	if name := findCover(); name != "" {
+	if name, err := findCover(); err == nil && name != "" {
 		return name
+	} else if err != nil {
+		log.Println("failed to find cover because: ", err)
 	}
 	if name := extractCover(); name != "" {
 		return name
@@ -22,7 +25,7 @@ func resolveCover() string {
 	if len(defaultCoverBytes) == 0 {
 		log.Fatal("embedded default cover not found")
 	}
-	err := ioutil.WriteFile(defaultCover, defaultCoverBytes, 0644)
+	err := os.WriteFile(defaultCover, defaultCoverBytes, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,17 +51,41 @@ func extractCover() string {
 	return extractedCoverName
 }
 
-func findCover() string {
-	for _, candidate := range []string{
-		"cover.jpg",
-		"Cover.jpg",
-		"cover.png",
-		"Cover.png",
-	} {
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+func findCover() (filename string, err error) {
+	dir, err := os.Getwd()
+	candidates, err := os.ReadDir(dir)
+	for _, candidate := range candidates {
+		if candidate.IsDir() {
 			continue
 		}
-		return candidate
+		candidateNameLowerCase := strings.ToLower(candidate.Name())
+		if isSupportedImageFormatFile(candidateNameLowerCase) {
+			lastDotIndex := strings.LastIndex(candidateNameLowerCase, ".")
+			justName, _ := strings.CutSuffix(candidateNameLowerCase, candidateNameLowerCase[lastDotIndex:])
+			if matchesTypicalCoverName(justName) {
+				if _, err := os.Stat(candidate.Name()); os.IsNotExist(err) {
+					log.Println("holly hell! The file suddenly disappeared! Filename:", candidate.Name())
+					continue
+				} else {
+					return candidate.Name(), nil
+				}
+			} else {
+				continue
+			}
+		}
 	}
-	return ""
+	return "", nil
+}
+
+func matchesTypicalCoverName(name string) bool {
+	return slices.Index([]string{"cover", "folder", "image"}, name) != -1
+}
+
+func isSupportedImageFormatFile(filenameLowerCase string) bool {
+	for _, suffix := range []string{".jpg", ".jpeg", ".png"} {
+		if strings.HasSuffix(filenameLowerCase, suffix) {
+			return true
+		}
+	}
+	return false
 }
