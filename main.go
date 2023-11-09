@@ -1,7 +1,8 @@
 package main
 
 import (
-	"io/ioutil"
+	"errors"
+	"flag"
 	"log"
 	"os"
 	"strings"
@@ -9,7 +10,23 @@ import (
 
 const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
+type Arguments struct {
+	RemoveSource bool
+}
+
+func collectArguments() Arguments {
+	result := Arguments{}
+	flag.BoolVar(&result.RemoveSource, "remove-source", false, "remove MP3 files if conversion is success")
+	flag.Parse()
+	if flag.Parsed() {
+		return result
+	}
+	log.Fatalln(errors.New("failed to parse CLI arguments"))
+	return result
+}
+
 func main() {
+	arguments := collectArguments()
 	checkPrerequisites()
 	log.Println("Detecting bitrate")
 	bitrate := detectBitrate()
@@ -34,6 +51,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if arguments.RemoveSource {
+		log.Println("source removal requested")
+		removeSourceFiles()
+	}
+}
+
+func removeSourceFiles() {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	entries, err := os.ReadDir(wd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp3") {
+			err = os.Remove(entry.Name())
+			if err != nil {
+				log.Printf("error when deleting the source file \"%s\" : %v \n", entry.Name(), err)
+			}
+		}
+	}
 }
 
 func cleanup() error {
@@ -41,7 +81,7 @@ func cleanup() error {
 	if err != nil {
 		return err
 	}
-	files, err := ioutil.ReadDir(wd)
+	files, err := os.ReadDir(wd)
 	if err != nil {
 		return err
 	}
