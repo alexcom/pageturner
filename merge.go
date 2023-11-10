@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -64,7 +63,7 @@ func generateMergeFileList() (filename string, err error) {
 			return
 		}
 	}
-	if err = ioutil.WriteFile(fileListFileName, bb.Bytes(), 0644); err != nil {
+	if err = os.WriteFile(fileListFileName, bb.Bytes(), 0644); err != nil {
 		return
 	}
 	return fileListFileName, nil

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -242,7 +241,7 @@ func listFilesByExt(ext string) []string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	dirContent, err := ioutil.ReadDir(wd)
+	dirContent, err := os.ReadDir(wd)
 	if err != nil {
 		log.Fatal(err)
 	}
