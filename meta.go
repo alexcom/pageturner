@@ -156,18 +156,22 @@ func setPredefinedTags(t *tagsContainer) {
 }
 
 func outName(tags map[string]string) string {
+	var result string
 	if artist, ok := tags["artist"]; ok {
 		if album, ok := tags["album"]; ok {
-			return fmt.Sprintf("%s - %s.m4b", artist, album)
+			result = fmt.Sprintf("%s - %s.m4b", artist, album)
 		}
 	}
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Print(err)
-		return "book.m4b"
+	if result == "" {
+		wd, err := os.Getwd()
+		if err == nil {
+			result = filepath.Base(wd) + ".m4b"
+		} else {
+			log.Print(err)
+			result = "book.m4b"
+		}
 	}
-
-	return filepath.Base(wd) + ".m4b"
+	return strings.ReplaceAll(result, string(filepath.Separator), "_")
 }
 
 func computeTracks(metaList []container) (tracks []track, err error) {
