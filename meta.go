@@ -254,7 +254,7 @@ func listFilesByExt(ext string) []string {
 		if file.IsDir() {
 			continue
 		}
-		if strings.HasSuffix(file.Name(), ext) {
+		if strings.HasSuffix(strings.ToLower(file.Name()), ext) {
 			result = append(result, file.Name())
 		}
 	}
