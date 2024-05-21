@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -60,17 +61,15 @@ func findCover() (filename string, err error) {
 		}
 		candidateNameLowerCase := strings.ToLower(candidate.Name())
 		if isSupportedImageFormatFile(candidateNameLowerCase) {
-			lastDotIndex := strings.LastIndex(candidateNameLowerCase, ".")
-			justName, _ := strings.CutSuffix(candidateNameLowerCase, candidateNameLowerCase[lastDotIndex:])
-			if matchesTypicalCoverName(justName) {
-				if _, err := os.Stat(candidate.Name()); os.IsNotExist(err) {
-					log.Println("holly hell! The file suddenly disappeared! Filename:", candidate.Name())
-					continue
-				} else {
-					return candidate.Name(), nil
-				}
-			} else {
+			justName := strings.TrimSuffix(candidateNameLowerCase, filepath.Ext(candidateNameLowerCase))
+			if !matchesTypicalCoverName(justName) {
 				continue
+			}
+			if _, err := os.Stat(candidate.Name()); os.IsNotExist(err) {
+				log.Println("holly hell! The file suddenly disappeared! Filename:", candidate.Name())
+				continue
+			} else {
+				return candidate.Name(), nil
 			}
 		}
 	}
