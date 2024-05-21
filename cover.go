@@ -52,15 +52,19 @@ func extractCover() string {
 	return extractedCoverName
 }
 
+const maxImageSize = 300 * 1024
+
 func findCover() (filename string, err error) {
 	dir, err := os.Getwd()
 	candidates, err := os.ReadDir(dir)
+	foundImages := make([]os.DirEntry, 0)
 	for _, candidate := range candidates {
 		if candidate.IsDir() {
 			continue
 		}
 		candidateNameLowerCase := strings.ToLower(candidate.Name())
 		if isSupportedImageFormatFile(candidateNameLowerCase) {
+			foundImages = append(foundImages, candidate)
 			justName := strings.TrimSuffix(candidateNameLowerCase, filepath.Ext(candidateNameLowerCase))
 			if !matchesTypicalCoverName(justName) {
 				continue
@@ -73,6 +77,17 @@ func findCover() (filename string, err error) {
 			}
 		}
 	}
+	// Last resort, find *single* image in current dir with proper size
+	log.Println("Looking for single image in current directory.")
+	if len(foundImages) == 1 {
+		if f, err := foundImages[0].Info(); err == nil {
+			if f.Size() <= maxImageSize {
+				log.Println("Using single image found", f.Name())
+				return foundImages[0].Name(), nil
+			}
+		}
+	}
+	log.Println("INFO cover not found")
 	return "", nil
 }
 
