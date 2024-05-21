@@ -153,6 +153,11 @@ func generateFFMETA() (filename string, err error) {
 
 func setPredefinedTags(t *tagsContainer) {
 	t.Format.Tags["genre"] = "Audiobook" // 183 Winamp style according to Wikipedia
+	// BookPlayer apparently uses title from file meta or filename if title empty
+	// Apple Books seem to use album.
+	if album, ok := t.Format.Tags["album"]; ok && album != "" {
+		t.Format.Tags["title"] = album
+	}
 }
 
 func outName(tags map[string]string) string {
@@ -195,13 +200,9 @@ func sortByFilename(metaList []container) {
 
 func removeNonWhitelistedTags(tagBag *tagsContainer) {
 	whitelist := map[string]bool{
-		"album": true,
-		//"genre":     true,
-		"title":     true,
+		"album":     true,
 		"artist":    true,
-		"disk":      true,
 		"track":     true,
-		"date":      true,
 		"performer": true,
 	}
 	for key := range tagBag.Format.Tags {
