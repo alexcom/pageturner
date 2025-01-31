@@ -45,8 +45,8 @@ func extractCover() string {
 	err := runScriptArgs(script[0], script[1:], nil)
 	if err != nil {
 		// assuming we will use default cover, so no fatality
-		log.Println("INFO cover extraction failed with error:", err)
-		log.Println("INFO cover extraction is unsuccessful, will use default cover")
+		log.Println("cover extraction failed with error:", err)
+		log.Println("cover extraction is unsuccessful, will use default cover")
 		return ""
 	}
 	return extractedCoverName
@@ -87,7 +87,7 @@ func findCover() (filename string, err error) {
 			}
 		}
 	}
-	log.Println("INFO cover not found")
+	log.Println("cover not found")
 	return "", nil
 }
 
