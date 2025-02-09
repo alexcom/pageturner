@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -28,26 +29,36 @@ func collectArguments() Arguments {
 func main() {
 	arguments := collectArguments()
 	checkPrerequisites()
+	tempDir := os.TempDir()
+	convertDir, err := os.MkdirTemp(tempDir, "pageturner")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		err := os.RemoveAll(convertDir)
+		if err != nil {
+			log.Println("WARN", err)
+		}
+	}()
 	log.Println("Detecting bitrate")
 	bitrate := detectBitrate()
 	log.Println("Converting files")
-	var err error
-	if err = parallelConvert(bitrate); err != nil {
+	if err = parallelConvert(convertDir, bitrate); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Generating metadata file")
-	outFilename, err := generateFFMETA()
+	outFilename, err := generateFFMETA(convertDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Searching for cover")
 	cover := resolveCover()
 	log.Println("Merging files with metadata")
-	if err = merge(outFilename, cover); err != nil {
+	if err = merge(convertDir, outFilename, cover); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Cleaning up")
-	err = cleanup()
+	err = cleanup(convertDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,22 +87,26 @@ func removeSourceFiles() {
 	}
 }
 
-func cleanup() error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	files, err := os.ReadDir(wd)
+func cleanup(convertDir string) error {
+	files, err := os.ReadDir(convertDir)
 	if err != nil {
 		return err
 	}
 	for _, f := range files {
 		if !f.IsDir() && (strings.HasSuffix(f.Name(), ".m4a") || f.Name() == metadataFileName) {
-			err = os.Remove(f.Name())
+			err = os.Remove(filepath.Join(convertDir, f.Name()))
 			if err != nil {
 				log.Println("WARN", err)
 			}
 		}
 	}
 	return nil
+}
+
+func getWd() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return wd
 }

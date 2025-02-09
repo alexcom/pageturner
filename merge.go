@@ -22,8 +22,8 @@ const (
 )
 const fileListFileName = "filelist.txt"
 
-func merge(filename, cover string) (err error) {
-	listFileName, err := generateMergeFileList()
+func merge(convertDir, filename, cover string) (err error) {
+	listFileName, err := generateMergeFileList(convertDir)
 	defer func() {
 		err := os.Remove(listFileName)
 		if err != nil {
@@ -52,13 +52,11 @@ func merge(filename, cover string) (err error) {
 	return runScriptArgs(script[0], script[1:], nil)
 }
 
-func generateMergeFileList() (filename string, err error) {
-	files := listFilesByExt(".m4a")
+func generateMergeFileList(convertDir string) (filename string, err error) {
+	files := listFilesByExt(convertDir, ".m4a")
 	bb := bytes.Buffer{}
 	for _, file := range files {
-		if file, err = filepath.Abs(file); err != nil {
-			return
-		}
+		file = filepath.Join(convertDir, file)
 		if _, err = fmt.Fprintf(&bb, "file '%s'\n", escapeQuote(file)); err != nil {
 			return
 		}

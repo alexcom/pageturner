@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
@@ -24,8 +25,8 @@ const (
 	outputFmt  = "%s.m4a"
 )
 
-func parallelConvert(bitrate int) error {
-	files := listFilesByExt(".mp3")
+func parallelConvert(convertDir string, bitrate int) error {
+	files := listFilesByExt(getWd(), ".mp3")
 	if len(files) == 0 {
 		return errors.New("no MP3 files discovered in current directory")
 	}
@@ -41,7 +42,7 @@ func parallelConvert(bitrate int) error {
 	for i := 0; i < threads; i++ {
 		go func(in <-chan string) {
 			for filename := range in {
-				err := runScriptArgs(ffmpeg, makeArgs(filename, bitrate), nil)
+				err := runScriptArgs(ffmpeg, makeArgs(convertDir, filename, bitrate), nil)
 				if err != nil {
 					errCh <- err
 				} else {
@@ -61,14 +62,15 @@ func parallelConvert(bitrate int) error {
 	return <-errCh
 }
 
-func makeArgs(filename string, aBitRate int) []string {
+func makeArgs(convertDir, filename string, aBitRate int) []string {
+	targetPath := filepath.Join(convertDir, fmt.Sprintf(outputFmt, filename[:len(filename)-4]))
 	return []string{
 		confirm,
 		input, filename,
 		mapping, mapIndex,
 		audioCodec, aac,
 		bitrate, fmt.Sprintf(brFmt, aBitRate),
-		fmt.Sprintf(outputFmt, filename[:len(filename)-4]),
+		targetPath,
 	}
 }
 
@@ -79,7 +81,7 @@ type bitrateContainer struct {
 }
 
 func detectBitrate() int {
-	metaBytesChan, err := readMetadataFromFilesWithExtension(".mp3")
+	metaBytesChan, err := readMetadataFromFilesWithExtension(getWd(), ".mp3")
 	if err != nil {
 		log.Fatal(err)
 	}

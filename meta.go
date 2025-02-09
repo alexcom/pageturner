@@ -64,8 +64,8 @@ type tagsContainer struct {
 	} `json:"format"`
 }
 
-func readMetadataFromFilesWithExtension(ext string) (_ <-chan bytes.Buffer, err error) {
-	files := listFilesByExt(ext)
+func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer, err error) {
+	files := listFilesByExt(dir, ext)
 	fileCount := len(files)
 	if fileCount == 0 {
 		err = errors.New("no " + ext + " files found, check conversion results and error logs")
@@ -82,7 +82,7 @@ func readMetadataFromFilesWithExtension(ext string) (_ <-chan bytes.Buffer, err 
 	for i := 0; i < threads; i++ {
 		go func(input <-chan string, output chan<- bytes.Buffer) {
 			for filename := range input {
-				bb, err := getMetaJsonBytes(filename)
+				bb, err := getMetaJsonBytes(dir, filename)
 				if err != nil {
 					log.Println("ERROR", err)
 				} else {
@@ -101,8 +101,8 @@ func readMetadataFromFilesWithExtension(ext string) (_ <-chan bytes.Buffer, err 
 	return outCh, nil
 }
 
-func generateFFMETA() (filename string, err error) {
-	fileBytesChan, err := readMetadataFromFilesWithExtension(".m4a")
+func generateFFMETA(convertDir string) (filename string, err error) {
+	fileBytesChan, err := readMetadataFromFilesWithExtension(convertDir, ".m4a")
 	if err != nil {
 		return
 	}
@@ -215,7 +215,8 @@ func removeNonWhitelistedTags(tagBag *tagsContainer) {
 func selectTitle(meta format, counter int) (title string) {
 	if title = meta.Tags.Title; title == "" {
 		if title = meta.Filename; title != "" {
-			title = cutOffExtension(title)
+			title = filepath.Base(title)
+			title = strings.TrimSuffix(title, filepath.Ext(title))
 		} else {
 			title = fmt.Sprintf("%04d", counter)
 		}
@@ -233,20 +234,8 @@ func parseAppendDuration(prevEnd int, durationString string) (rStart int, rEnd i
 	return prevEnd, prevEnd + subsec, nil
 }
 
-func cutOffExtension(filename string) string {
-	lastDotIndex := strings.LastIndex(filename, ".")
-	if lastDotIndex == -1 {
-		return filename
-	}
-	return filename[0:lastDotIndex]
-}
-
-func listFilesByExt(ext string) []string {
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-	dirContent, err := os.ReadDir(wd)
+func listFilesByExt(dir, ext string) []string {
+	dirContent, err := os.ReadDir(dir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -262,13 +251,13 @@ func listFilesByExt(ext string) []string {
 	return result
 }
 
-func getMetaJsonBytes(filename string) (bb bytes.Buffer, err error) {
+func getMetaJsonBytes(dir, filename string) (bb bytes.Buffer, err error) {
 	log.Println("extracting meta from", filename)
 	const commandStart = "ffprobe -hide_banner -of json -v quiet -show_entries format"
 	commandArr := strings.FieldsFunc(commandStart, func(a rune) bool {
 		return a == ' '
 	})
-	cmd := exec.Command(commandArr[0], append(commandArr[1:], filename)...)
+	cmd := exec.Command(commandArr[0], append(commandArr[1:], filepath.Join(dir, filename))...)
 	cmd.Stdout = &bb
 	err = cmd.Run()
 	return

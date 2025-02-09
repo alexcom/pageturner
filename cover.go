@@ -36,7 +36,7 @@ func resolveCover() string {
 const extractedCoverName = "cover.jpg"
 
 func extractCover() string {
-	mp3s := listFilesByExt(".mp3")
+	mp3s := listFilesByExt(getWd(), ".mp3")
 	if len(mp3s) == 0 {
 		log.Println("WARN no mp3 files to extract cover from")
 		return ""
