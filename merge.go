@@ -41,7 +41,7 @@ func merge(convertDir, filename, cover string) (err error) {
 		safe, "0",
 		input, listFileName,
 		input, cover,
-		input, "FFMETA",
+		input, metadataFileName,
 		mapping, "0",
 		mapping, "1",
 		mapMeta, "2",

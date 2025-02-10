@@ -93,12 +93,15 @@ func cleanup(convertDir string) error {
 		return err
 	}
 	for _, f := range files {
-		if !f.IsDir() && (strings.HasSuffix(f.Name(), ".m4a") || f.Name() == metadataFileName) {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".m4a") {
 			err = os.Remove(filepath.Join(convertDir, f.Name()))
 			if err != nil {
 				log.Println("WARN", err)
 			}
 		}
+	}
+	if err = os.Remove(metadataFileName); err != nil {
+		log.Println("WARN", err)
 	}
 	return nil
 }
