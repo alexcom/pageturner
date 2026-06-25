@@ -43,8 +43,8 @@ func main() {
 	log.Println("Detecting bitrate")
 	bitrate := detectBitrate()
 	log.Println("Converting files")
-	if err = parallelConvert(convertDir, bitrate); err != nil {
-		log.Fatal(err)
+	if errs := parallelConvert(convertDir, bitrate); len(errs) > 0 {
+		log.Fatal(errs)
 	}
 	log.Println("Generating metadata file")
 	outFilename, err := generateFFMETA(convertDir)

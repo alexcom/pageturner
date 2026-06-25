@@ -25,10 +25,10 @@ const (
 	outputFmt  = "%s.m4a"
 )
 
-func parallelConvert(convertDir string, bitrate int) error {
+func parallelConvert(convertDir string, bitrate int) []error {
 	files := listFilesByExt(getWd(), ".mp3")
 	if len(files) == 0 {
-		return errors.New("no MP3 files discovered in current directory")
+		return []error{errors.New("no MP3 files discovered in current directory")}
 	}
 	errCh := make(chan error, len(files))
 	in := make(chan string)
@@ -59,7 +59,11 @@ func parallelConvert(convertDir string, bitrate int) error {
 	close(in)
 	wg.Wait()
 	close(errCh)
-	return <-errCh
+	errs := []error{}
+	for e := range errCh {
+		errs = append(errs, e)
+	}
+	return errs
 }
 
 func makeArgs(convertDir, filename string, aBitRate int) []string {
