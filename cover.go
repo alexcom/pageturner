@@ -12,7 +12,10 @@ import (
 //go:embed data/default_cover.png
 var defaultCoverBytes []byte
 
-const defaultCover = "default_cover.png"
+const (
+	defaultCover = "default_cover.png"
+	noAudio      = "-an"
+)
 
 func resolveCover() string {
 	if name, err := findCover(); err == nil && name != "" {
@@ -41,7 +44,7 @@ func extractCover() string {
 		log.Println("WARN no mp3 files to extract cover from")
 		return ""
 	}
-	script := []string{ffmpeg, confirm, input, mp3s[0], mapping, "0:v", mapping, "-0:V", extractedCoverName}
+	script := []string{ffmpeg, confirm, input, mp3s[0], noAudio, extractedCoverName}
 	err := runScriptArgs(script[0], script[1:], nil)
 	if err != nil {
 		// assuming we will use default cover, so no fatality
