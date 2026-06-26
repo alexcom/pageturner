@@ -59,6 +59,9 @@ const maxImageSize = 300 * 1024
 
 func findCover() (filename string, err error) {
 	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
 	candidates, err := os.ReadDir(dir)
 	foundImages := make([]os.DirEntry, 0)
 	for _, candidate := range candidates {
