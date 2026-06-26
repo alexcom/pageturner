@@ -225,13 +225,12 @@ func selectTitle(meta format, counter int) (title string) {
 }
 
 func parseAppendDuration(prevEnd int, durationString string) (rStart int, rEnd int, err error) {
-	durationString = durationString[:len(durationString)-3] // trimming trailing zeroes
 	durationString = strings.Replace(durationString, ".", "", 1)
 	subsec, err := strconv.Atoi(durationString)
 	if err != nil {
 		return 0, 0, err
 	}
-	return prevEnd, prevEnd + subsec, nil
+	return prevEnd, prevEnd + subsec/1000, nil
 }
 
 func listFilesByExt(dir, ext string) []string {
