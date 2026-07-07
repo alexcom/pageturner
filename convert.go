@@ -113,7 +113,7 @@ func detectBitrate() int {
 		}
 	}
 	// 2 less than 50% of files are lower quality = majority bitrate(higher)
-	// 3 all files are of various bitrate, no leaders = compute weighted average bitrate, round up
+	// 3 all files are of various bitrate, no leaders = compute weighed average bitrate, round up
 	// note : trying really naive approach here
 	sum := 0
 	log.Println("Source bit rates:")
