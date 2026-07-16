@@ -80,12 +80,13 @@ func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer,
 	}
 	inCh := make(chan string)
 	outCh := make(chan bytes.Buffer, len(files))
+	errCh := make(chan error, fileCount)
 	for i := 0; i < threads; i++ {
 		go func(input <-chan string, output chan<- bytes.Buffer) {
 			for filename := range input {
 				bb, err := getMetaJsonBytes(dir, filename)
 				if err != nil {
-					log.Println("ERROR", err)
+					errCh <- fmt.Errorf("metadata extraction failed for %s: %w", filename, err)
 				} else {
 					outCh <- bb
 				}
@@ -99,6 +100,14 @@ func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer,
 	close(inCh)
 	wg.Wait()
 	close(outCh)
+	close(errCh)
+	var errs []error
+	for e := range errCh {
+		errs = append(errs, e)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
 	return outCh, nil
 }
 
