@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -67,7 +68,7 @@ func parallelConvert(convertDir string, bitrate int) error {
 }
 
 func makeArgs(convertDir, filename string, aBitRate int) []string {
-	targetPath := filepath.Join(convertDir, fmt.Sprintf(outputFmt, filename[:len(filename)-4]))
+	targetPath := filepath.Join(convertDir, fmt.Sprintf(outputFmt, strings.TrimSuffix(filename, filepath.Ext(filename))))
 	return []string{
 		confirm,
 		input, filename,
