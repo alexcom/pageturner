@@ -79,7 +79,7 @@ func removeSourceFiles() {
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp3") {
-			err = os.Remove(entry.Name())
+			err = os.Remove(filepath.Join(wd, entry.Name()))
 			if err != nil {
 				log.Printf("error when deleting the source file \"%s\" : %v \n", entry.Name(), err)
 			}
