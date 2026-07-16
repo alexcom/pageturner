@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,12 +226,12 @@ func selectTitle(meta format, counter int) (title string) {
 }
 
 func parseAppendDuration(prevEnd int, durationString string) (rStart int, rEnd int, err error) {
-	durationString = strings.Replace(durationString, ".", "", 1)
-	subsec, err := strconv.Atoi(durationString)
+	d, err := strconv.ParseFloat(durationString, 64)
 	if err != nil {
 		return 0, 0, err
 	}
-	return prevEnd, prevEnd + subsec/1000, nil
+	durationMs := int(math.Round(d * 1000))
+	return prevEnd, prevEnd + durationMs, nil
 }
 
 func listFilesByExt(dir, ext string) []string {
