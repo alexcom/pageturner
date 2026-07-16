@@ -24,15 +24,15 @@ const fileListFileName = "filelist.txt"
 
 func merge(convertDir, filename, cover string) (err error) {
 	listFileName, err := generateMergeFileList(convertDir)
+	if err != nil {
+		return
+	}
 	defer func() {
 		err := os.Remove(listFileName)
 		if err != nil {
 			log.Println("WARN", listFileName, "was not deleted")
 		}
 	}()
-	if err != nil {
-		return
-	}
 	script := []string{
 		ffmpeg,
 		confirm,
