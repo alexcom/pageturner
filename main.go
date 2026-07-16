@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"log"
 	"os"
@@ -19,10 +18,6 @@ func collectArguments() Arguments {
 	result := Arguments{}
 	flag.BoolVar(&result.RemoveSource, "remove-source", false, "remove MP3 files if conversion is success")
 	flag.Parse()
-	if flag.Parsed() {
-		return result
-	}
-	log.Fatalln(errors.New("failed to parse CLI arguments"))
 	return result
 }
 
