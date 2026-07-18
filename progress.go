@@ -47,8 +47,10 @@ type ProgressModel struct {
 }
 
 func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
+	files := listFilesByExt(getWd(), ".mp3")
 	m := &ProgressModel{
 		config: config,
+		totalFiles: len(files),
 		workers: []string{},
 		logs:   []string{"Starting conversion..."},
 		updates: make(chan tea.Msg),
