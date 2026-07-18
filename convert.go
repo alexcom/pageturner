@@ -42,6 +42,10 @@ func parallelConvert(convertDir string, aBitrate int, updates chan<- tea.Msg) er
 		threads = len(files)
 	}
 
+	if updates != nil {
+		updates <- msgInitWorkers{count: threads}
+	}
+
 	convertedCount := 0
 	var mu sync.Mutex
 

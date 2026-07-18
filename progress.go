@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +26,10 @@ type msgStepAdvance struct {
 	step int
 }
 
+type msgInitWorkers struct {
+	count int
+}
+
 type ProgressModel struct {
 	config ConversionConfig
 
@@ -44,15 +47,9 @@ type ProgressModel struct {
 }
 
 func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
-	numWorkers := runtime.NumCPU()
-	workers := make([]string, numWorkers)
-	for i := 0; i < numWorkers; i++ {
-		workers[i] = "Idle"
-	}
-
 	m := &ProgressModel{
 		config: config,
-		workers: workers,
+		workers: []string{},
 		logs:   []string{"Starting conversion..."},
 		updates: make(chan tea.Msg),
 	}
@@ -86,6 +83,12 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgWorkerUpdate:
 		if msg.workerID >= 0 && msg.workerID < len(m.workers) {
 			m.workers[msg.workerID] = msg.status
+		}
+		return m, waitForUpdate(m.updates)
+	case msgInitWorkers:
+		m.workers = make([]string, msg.count)
+		for i := 0; i < msg.count; i++ {
+			m.workers[i] = "Idle"
 		}
 		return m, waitForUpdate(m.updates)
 	case msgProgress:
@@ -137,12 +140,16 @@ func (m *ProgressModel) View() string {
 	
 	// Left: Workers
 	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render("ACTIVE CONVERSION WORKERS") + "\n\n")
-	for i, w := range m.workers {
+	for _, w := range m.workers {
 		status := w
-		if len([]rune(status)) > 35 {
-			status = string([]rune(status)[:32]) + "..."
+		if len([]rune(status)) > 45 {
+			status = string([]rune(status)[:42]) + "..."
 		}
-		fmt.Fprintf(&left, "Worker %d: %s\n", i+1, status)
+		if status == "Idle" {
+			fmt.Fprintf(&left, "  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Idle"))
+		} else {
+			fmt.Fprintf(&left, "  %s\n", status)
+		}
 	}
 	
 	// Right: Checklist
