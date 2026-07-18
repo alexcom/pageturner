@@ -97,6 +97,7 @@ func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
 	}
 	
 	updates <- msgLog{text: "Conversion successful!"}
+	updates <- msgStepAdvance{step: 6}
 	updates <- msgConversionDone{}
 }
 

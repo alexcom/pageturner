@@ -93,7 +93,7 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadDir(filepath.Join(m.dir, entry.Name()))
 				}
 			}
-		case "o", "space": // Open selected dir
+		case "o", " ": // Open selected dir
 			if m.cursor == 0 {
 				return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
 			} else {
@@ -157,7 +157,7 @@ func (m *FileManagerModel) View() string {
 		fmt.Fprintf(b, "\n")
 	}
 
-	fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Arrows/hjkl: Navigate • Enter/Right: Enter Dir • Backspace/Left: Parent Dir • Space: Select this directory • q: Quit"))
+	fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Arrows/hjkl: Navigate • Enter/Right: Enter Dir • Backspace/Left: Parent Dir • Space: Open in Dashboard • q: Quit"))
 
 	return b.String()
 }

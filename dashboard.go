@@ -223,9 +223,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 			
 		case "enter":
-			if m.focusIndex == dashStartButton {
-				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
-			}
+			return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
 		
 		case " ":
 			if m.focusIndex == dashRemoveSourceToggle {

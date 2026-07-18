@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,14 +38,21 @@ type ProgressModel struct {
 	currentStep int
 	
 	logs []string
+	showFullLogs bool
 
 	updates chan tea.Msg
 }
 
 func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
+	numWorkers := runtime.NumCPU()
+	workers := make([]string, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		workers[i] = "Idle"
+	}
+
 	m := &ProgressModel{
 		config: config,
-		workers: []string{"Idle", "Idle", "Idle", "Idle"}, // Simulated 4 workers
+		workers: workers,
 		logs:   []string{"Starting conversion..."},
 		updates: make(chan tea.Msg),
 	}
@@ -64,10 +72,15 @@ func (m *ProgressModel) Init() tea.Cmd {
 
 func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "l" || msg.String() == "L" {
+			m.showFullLogs = !m.showFullLogs
+		}
+		return m, nil
 	case msgLog:
 		m.logs = append(m.logs, msg.text)
-		if len(m.logs) > 10 {
-			m.logs = m.logs[len(m.logs)-10:]
+		if len(m.logs) > 1000 {
+			m.logs = m.logs[len(m.logs)-1000:]
 		}
 		return m, waitForUpdate(m.updates)
 	case msgWorkerUpdate:
@@ -85,6 +98,7 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgError:
 		return m, func() tea.Msg { return msg }
 	case msgConversionDone:
+		m.currentStep = 6
 		return m, func() tea.Msg { return msg }
 	}
 	return m, nil
@@ -92,6 +106,15 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *ProgressModel) View() string {
 	b := &strings.Builder{}
+
+	if m.showFullLogs {
+		fmt.Fprintf(b, "%s\n\n", titleStyle.Render("C O N V E R T I N G   A U D I O B O O K   -   L O G S"))
+		for _, l := range m.logs {
+			fmt.Fprintf(b, "%s\n", l)
+		}
+		fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Press 'l' to return to dashboard"))
+		return b.String()
+	}
 
 	fmt.Fprintf(b, "%s\n\n", titleStyle.Render("C O N V E R T I N G   A U D I O B O O K"))
 	
@@ -115,7 +138,11 @@ func (m *ProgressModel) View() string {
 	// Left: Workers
 	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render("ACTIVE CONVERSION WORKERS") + "\n\n")
 	for i, w := range m.workers {
-		fmt.Fprintf(&left, "Worker %d: %s\n", i+1, w)
+		status := w
+		if len([]rune(status)) > 35 {
+			status = string([]rune(status)[:32]) + "..."
+		}
+		fmt.Fprintf(&left, "Worker %d: %s\n", i+1, status)
 	}
 	
 	// Right: Checklist
@@ -143,9 +170,13 @@ func (m *ProgressModel) View() string {
 	fmt.Fprintf(b, "%s\n\n", lipgloss.JoinHorizontal(lipgloss.Top, leftStr, right.String()))
 	
 	// Bottom: Logs
-	fmt.Fprintf(b, "%s\n", lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS"))
-	for _, l := range m.logs {
-		fmt.Fprintf(b, "%s\n", l)
+	fmt.Fprintf(b, "%s\n", lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS (Press 'l' to expand)"))
+	start := 0
+	if len(m.logs) > 5 {
+		start = len(m.logs) - 5
+	}
+	for i := start; i < len(m.logs); i++ {
+		fmt.Fprintf(b, "%s\n", m.logs[i])
 	}
 
 	return b.String()
