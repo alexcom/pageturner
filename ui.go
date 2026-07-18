@@ -222,12 +222,21 @@ func (m *UI) View() string {
 
 // Global UI Styles
 var (
+	primaryColor   = lipgloss.Color("#00ADB5")
+	secondaryColor = lipgloss.Color("#393E46")
+	textColor      = lipgloss.Color("#EEEEEE")
+	subtextColor   = lipgloss.Color("#AAAAAA")
+	errorColor     = lipgloss.Color("#FF2E63")
+	successColor   = lipgloss.Color("#00D846")
+)
+
+var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("6")). // Cyan
+			Foreground(primaryColor).
 			Padding(0, 1).
 			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("6"))
+			BorderForeground(primaryColor)
 
-	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpStyle = lipgloss.NewStyle().Foreground(subtextColor)
 )

@@ -49,7 +49,7 @@ func main() {
 		}
 	}
 
-	p := tea.NewProgram(newUI(initialState, wd), tea.WithAltScreen())
+	p := tea.NewProgram(newUI(initialState, wd), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Alas, there's been an error: %v", err)
 	}
