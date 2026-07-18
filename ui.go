@@ -87,6 +87,7 @@ type ConversionConfig struct {
 	CoverSource  int    // index or type of cover
 	CoverPath    string // actual path or empty if default
 	RemoveSource bool
+	BitRate      int
 }
 
 type msgStartConversion struct {

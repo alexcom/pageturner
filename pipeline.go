@@ -34,16 +34,11 @@ func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
 		}
 	}()
 
-	updates <- msgLog{text: "Detecting bitrate..."}
-	bitrate, err := detectBitrate(updates)
-	if err != nil {
-		updates <- msgError{err: err}
-		return
-	}
+	updates <- msgLog{text: fmt.Sprintf("Using bitrate %d kbps", config.BitRate)}
 
 	updates <- msgStepAdvance{step: 1}
 	updates <- msgLog{text: "Converting files..."}
-	if err := parallelConvert(convertDir, bitrate, updates); err != nil {
+	if err := parallelConvert(convertDir, config.BitRate, updates); err != nil {
 		updates <- msgError{err: err}
 		return
 	}

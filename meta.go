@@ -50,6 +50,7 @@ type format struct {
 	Filename  string `json:"filename"`
 	StartTime string `json:"start_time"`
 	Duration  string `json:"duration"`
+	BitRate   string `json:"bit_rate"`
 	Tags      struct {
 		Album  string `json:"album"`
 		Genre  string `json:"genre"`

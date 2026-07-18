@@ -132,6 +132,10 @@ func (m *DashboardModel) scanDirectory() {
 			}
 		}
 		
+		if br, err := detectBitrate(m.dir, nil); err == nil {
+			m.bitrate = br
+		}
+		
 		if artist != "" {
 			m.inputs[dashInputArtist].SetValue(artist)
 		} else {
@@ -209,6 +213,7 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 		CoverSource:  m.coverIndex,
 		CoverPath:    coverPath,
 		RemoveSource: m.removeSource,
+		BitRate:      m.bitrate,
 	}
 }
 
@@ -349,7 +354,11 @@ func (m *DashboardModel) View() string {
 		left = append(left, "")
 	}
 	
-	left = append(left, "", "Detected Bitrate: Unknown")
+	bitrateStr := "Detected Bitrate: Unknown"
+	if m.bitrate > 0 {
+		bitrateStr = fmt.Sprintf("Detected Bitrate: %d kbps", m.bitrate)
+	}
+	left = append(left, "", bitrateStr)
 	
 	toggleStr := "[ ]"
 	if m.removeSource {

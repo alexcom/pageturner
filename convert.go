@@ -101,21 +101,17 @@ func makeArgs(convertDir, filename string, aBitRate int) []string {
 	}
 }
 
-type bitrateContainer struct {
-	Format struct {
-		BitRate string `json:"bit_rate"`
-	} `json:"format"`
-}
 
-func detectBitrate(updates chan<- tea.Msg) (int, error) {
-	metaBytesChan, err := readMetadataFromFilesWithExtension(getWd(), ".mp3")
+
+func detectBitrate(dir string, updates chan<- tea.Msg) (int, error) {
+	metaBytesChan, err := readMetadataFromFilesWithExtension(dir, ".mp3")
 	if err != nil {
 		return 0, err
 	}
 	groupped := map[int]int{}
 	count := 0
 	for buffer := range metaBytesChan {
-		data := bitrateContainer{}
+		var data container
 		err = json.Unmarshal(buffer.Bytes(), &data)
 		if err != nil {
 			return 0, err
