@@ -38,6 +38,7 @@ func writeOutputToFile(bb bytes.Buffer) {
 	file, err := os.OpenFile(filename, newFileMode, 0644)
 	if err != nil {
 		fmt.Println(err)
+		return
 	}
 	defer closeDeferred(file)
 	_, err = bb.WriteTo(file)
