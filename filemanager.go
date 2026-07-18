@@ -1,26 +1,61 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+type item struct {
+	name  string
+	isDir bool
+}
+
+func (i item) Title() string {
+	if i.isDir {
+		return "📁 " + i.name
+	}
+	return "📄 " + i.name
+}
+func (i item) Description() string {
+	if i.name == ".." {
+		return "Parent Directory"
+	}
+	if i.isDir {
+		return "Directory"
+	}
+	return "File"
+}
+func (i item) FilterValue() string { return i.name }
+
 type FileManagerModel struct {
-	dir     string
-	entries []os.DirEntry
-	cursor  int
-	offset  int
+	dir  string
+	list list.Model
 }
 
 func newFileManagerModel(dir string) *FileManagerModel {
 	m := &FileManagerModel{
 		dir: dir,
 	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+
+	m.list = list.New([]list.Item{}, delegate, 80, 25)
+	m.list.SetShowStatusBar(false)
+	m.list.SetFilteringEnabled(true)
+	
+	// Customize the list's built-in title to look like a standard folder header
+	m.list.Styles.Title = lipgloss.NewStyle().
+		Background(lipgloss.Color("6")). // Cyan
+		Foreground(lipgloss.Color("0")). // Black text
+		Padding(0, 1)
+
 	m.loadDir(dir)
 	return m
 }
@@ -28,27 +63,31 @@ func newFileManagerModel(dir string) *FileManagerModel {
 func (m *FileManagerModel) loadDir(dir string) {
 	m.dir = filepath.Clean(dir)
 	entries, err := os.ReadDir(m.dir)
+	var items []list.Item
+
+	// Update list title to show current directory
+	m.list.Title = m.dir
+
+	// Always add parent
+	items = append(items, item{name: "..", isDir: true})
+
 	if err == nil {
-		m.entries = []os.DirEntry{}
 		for _, e := range entries {
 			// skip hidden files
 			if !strings.HasPrefix(e.Name(), ".") {
-				m.entries = append(m.entries, e)
+				items = append(items, item{name: e.Name(), isDir: e.IsDir()})
 			}
 		}
 	}
-	m.cursor = 0
-	m.offset = 0
+	m.list.SetItems(items)
+	m.list.ResetSelected()
 }
 
 func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
 	m.loadDir(dir)
-	for i, e := range m.entries {
-		if e.Name() == childName {
-			m.cursor = i + 1
-			if m.cursor >= 20 {
-				m.offset = m.cursor - 19
-			}
+	for i, it := range m.list.Items() {
+		if it.(item).name == childName {
+			m.list.Select(i)
 			break
 		}
 	}
@@ -59,105 +98,63 @@ func (m *FileManagerModel) Init() tea.Cmd {
 }
 
 func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		h, v := docStyle.GetFrameSize()
+		// Account for the main global title above the list
+		titleHeight := lipgloss.Height(titleStyle.Render("P A G E T U R N E R  -  F i l e   M a n a g e r")) + 1
+		m.list.SetSize(msg.Width-h, msg.Height-v-titleHeight)
+		// We still pass WindowSizeMsg down so the list updates itself.
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-			if m.cursor < m.offset {
-				m.offset = m.cursor
-			}
-		case "down", "j":
-			if m.cursor < len(m.entries) { // +1 for ".."
-				m.cursor++
-			}
-			if m.cursor >= m.offset+20 {
-				m.offset = m.cursor - 19
-			}
-		case "backspace", "left", "h":
-			parentDir := filepath.Dir(m.dir)
-			if parentDir != m.dir {
-				m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
-			}
-		case "enter", "right", "l":
-			if m.cursor == 0 {
+		// We only intercept keys for directory traversal and selection.
+		// Navigation (up/down/j/k) and filtering are handled by m.list.Update
+		if !m.list.SettingFilter() {
+			switch msg.String() {
+			case "left", "h":
 				parentDir := filepath.Dir(m.dir)
 				if parentDir != m.dir {
 					m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
 				}
-			} else {
-				entry := m.entries[m.cursor-1]
-				if entry.IsDir() {
-					m.loadDir(filepath.Join(m.dir, entry.Name()))
+				return m, nil
+			case "right", "l":
+				if i, ok := m.list.SelectedItem().(item); ok {
+					if i.name == ".." {
+						parentDir := filepath.Dir(m.dir)
+						if parentDir != m.dir {
+							m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
+						}
+					} else if i.isDir {
+						m.loadDir(filepath.Join(m.dir, i.name))
+					}
 				}
-			}
-		case "o", " ": // Open selected dir
-			if m.cursor == 0 {
-				return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
-			} else {
-				entry := m.entries[m.cursor-1]
-				if entry.IsDir() {
-					selectedDir := filepath.Join(m.dir, entry.Name())
-					return m, func() tea.Msg { return msgSwitchToDashboard{dir: selectedDir} }
-				} else {
-					return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+				return m, nil
+			case "enter", "o", " ": // Open selected dir or file's dir
+				if i, ok := m.list.SelectedItem().(item); ok {
+					if i.name == ".." {
+						return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+					} else if i.isDir {
+						selectedDir := filepath.Join(m.dir, i.name)
+						return m, func() tea.Msg { return msgSwitchToDashboard{dir: selectedDir} }
+					} else {
+						return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+					}
 				}
 			}
 		}
 	}
-	return m, nil
+
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
 }
 
+var docStyle = lipgloss.NewStyle().Margin(1, 2)
+
 func (m *FileManagerModel) View() string {
-	b := &strings.Builder{}
-
-	fmt.Fprintf(b, "%s\n\n", titleStyle.Render("P A G E T U R N E R  -  F i l e   M a n a g e r"))
-	fmt.Fprintf(b, "Current Directory: %s\n\n", m.dir)
-
-	end := m.offset + 20
-	if end > len(m.entries)+1 {
-		end = len(m.entries) + 1
-	}
-
-	for i := m.offset; i < end; i++ {
-		if i == 0 {
-			cursorStr := "  "
-			if m.cursor == 0 {
-				cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("> ")
-			}
-			fmt.Fprintf(b, "%s .. (Up)\n", cursorStr)
-			continue
-		}
-
-		e := m.entries[i-1]
-		cursorStr := "  "
-		if m.cursor == i {
-			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("> ")
-		}
-
-		icon := "📄"
-		if e.IsDir() {
-			icon = "📁"
-		}
-
-		fmt.Fprintf(b, "%s %s %s\n", cursorStr, icon, e.Name())
-	}
-	
-	// Pad the rest of the 20 slots if we have fewer items
-	renderedCount := end - m.offset
-	for i := renderedCount; i < 20; i++ {
-		fmt.Fprintf(b, "\n")
-	}
-	
-	if len(m.entries)+1 > m.offset+20 {
-		fmt.Fprintf(b, "   ... and %d more items\n", len(m.entries)+1-(m.offset+20))
-	} else {
-		fmt.Fprintf(b, "\n")
-	}
-
-	fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Arrows/hjkl: Navigate • Enter/Right: Enter Dir • Backspace/Left: Parent Dir • Space: Open in Dashboard • q: Quit"))
-
-	return b.String()
+	title := titleStyle.Render("P A G E T U R N E R  -  F i l e   M a n a g e r")
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		m.list.View(),
+	))
 }

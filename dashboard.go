@@ -265,13 +265,7 @@ func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (m *DashboardModel) View() string {
-	b := &strings.Builder{}
-
 	title := titleStyle.Render("P A G E T U R N E R  -  A u d i o b o o k   C o n v e r t e r")
-	fmt.Fprintf(b, "%s\n\n", title)
-	
-	// Split layout conceptually
-	var left, right strings.Builder
 	
 	// Left: Discovered files
 	fileListTitle := "DISCOVERED MP3 FILES"
@@ -280,7 +274,9 @@ func (m *DashboardModel) View() string {
 	} else {
 		fileListTitle = "  " + fileListTitle
 	}
-	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render(fileListTitle) + "\n\n")
+	
+	var left []string
+	left = append(left, lipgloss.NewStyle().Bold(true).Render(fileListTitle), "")
 	
 	displayFiles := m.files
 	start := m.fileOffset
@@ -299,25 +295,25 @@ func (m *DashboardModel) View() string {
 			if len([]rune(fname)) > 38 {
 				fname = string([]rune(fname)[:35]) + "..."
 			}
-			fmt.Fprintf(&left, "%s%s\n", prefix, fname)
+			left = append(left, prefix+fname)
 		}
-		fmt.Fprintf(&left, "   ... %d of %d \n", end, len(displayFiles))
+		left = append(left, fmt.Sprintf("   ... %d of %d ", end, len(displayFiles)))
 	} else if len(displayFiles) == 0 {
-		fmt.Fprintf(&left, "  No MP3 files found.\n")
-		for i := 0; i < 10; i++ { fmt.Fprintf(&left, "\n") }
+		left = append(left, "  No MP3 files found.")
+		for i := 0; i < 10; i++ { left = append(left, "") }
 	} else {
 		for _, f := range displayFiles {
 			fname := f
 			if len([]rune(fname)) > 38 {
 				fname = string([]rune(fname)[:35]) + "..."
 			}
-			fmt.Fprintf(&left, "  %s\n", fname)
+			left = append(left, "  "+fname)
 		}
-		for i := len(displayFiles); i < 10; i++ { fmt.Fprintf(&left, "\n") }
-		fmt.Fprintf(&left, "\n")
+		for i := len(displayFiles); i < 10; i++ { left = append(left, "") }
+		left = append(left, "")
 	}
 	
-	fmt.Fprintf(&left, "\nDetected Bitrate: Unknown\n")
+	left = append(left, "", "Detected Bitrate: Unknown")
 	
 	toggleStr := "[ ]"
 	if m.removeSource {
@@ -326,20 +322,21 @@ func (m *DashboardModel) View() string {
 	if m.focusIndex == dashRemoveSourceToggle {
 		toggleStr = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(">" + toggleStr)
 	}
-	fmt.Fprintf(&left, "%s Remove source files after conversion\n", toggleStr)
+	left = append(left, fmt.Sprintf("%s Remove source files after conversion", toggleStr))
 	
 	// Right: Metadata
-	fmt.Fprintf(&right, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION") + "\n\n")
+	var right []string
+	right = append(right, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION"), "")
 	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
 		prefix := "  "
 		if m.focusIndex == i {
 			prefix = "> "
 		}
 		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
-		fmt.Fprintf(&right, "%s%s%s\n", prefix, label, m.inputs[i].View())
+		right = append(right, prefix+label+m.inputs[i].View())
 	}
 	
-	fmt.Fprintf(&right, "\n%s\n\n", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"))
+	right = append(right, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
 	for i, c := range m.covers {
 		prefix := "  [ ] "
 		if i == m.coverIndex {
@@ -349,22 +346,29 @@ func (m *DashboardModel) View() string {
 			prefix = "> [x] "
 			prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(prefix)
 		}
-		fmt.Fprintf(&right, "%s%d. %s\n", prefix, i+1, c)
+		right = append(right, fmt.Sprintf("%s%d. %s", prefix, i+1, c))
 	}
 	
 	// Render columns side by side
-	leftStr := lipgloss.NewStyle().Width(50).PaddingRight(4).Render(left.String())
-	rightStr := right.String()
+	leftStr := lipgloss.NewStyle().Width(50).PaddingRight(4).Render(lipgloss.JoinVertical(lipgloss.Left, left...))
+	rightStr := lipgloss.JoinVertical(lipgloss.Left, right...)
 	
-	fmt.Fprintf(b, "%s\n\n", lipgloss.JoinHorizontal(lipgloss.Top, leftStr, rightStr))
+	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, rightStr)
 	
 	startBtn := "[ START CONVERSION (Enter) ]"
 	if m.focusIndex == dashStartButton {
 		startBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Render(startBtn)
 	}
-	fmt.Fprintf(b, "%s\n", startBtn)
 	
-	fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Tab/Shift+Tab: Navigate • Arrows: Select • Space: Toggle • Enter: Confirm • q/Ctrl+C: Quit"))
+	help := helpStyle.Render("Tab/Shift+Tab: Navigate • Arrows: Select • Space: Toggle • Enter: Confirm • q/Ctrl+C: Quit")
 
-	return b.String()
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		split,
+		"",
+		startBtn,
+		"",
+		help,
+	)
 }

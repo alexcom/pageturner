@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -35,26 +37,40 @@ type ProgressModel struct {
 
 	totalFiles     int
 	convertedFiles int
-	
+
 	workers []string
-	
+
 	currentStep int
-	
-	logs []string
+
+	logs         []string
 	showFullLogs bool
 
 	updates chan tea.Msg
+
+	progress progress.Model
+	viewport viewport.Model
 }
 
 func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
 	files := listFilesByExt(getWd(), ".mp3")
+	
+	prog := progress.New(progress.WithDefaultGradient())
+	vp := viewport.New(80, 20)
+	vp.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		PaddingRight(2)
+		
 	m := &ProgressModel{
-		config: config,
+		config:     config,
 		totalFiles: len(files),
-		workers: []string{},
-		logs:   []string{"Starting conversion..."},
-		updates: make(chan tea.Msg),
+		workers:    []string{},
+		logs:       []string{"Starting conversion..."},
+		updates:    make(chan tea.Msg),
+		progress:   prog,
+		viewport:   vp,
 	}
+	m.viewport.SetContent(strings.Join(m.logs, "\n"))
 	return m
 }
 
@@ -70,92 +86,129 @@ func (m *ProgressModel) Init() tea.Cmd {
 }
 
 func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.progress.Width = msg.Width - 4
+		if m.progress.Width > 80 {
+			m.progress.Width = 80
+		}
+		
+		m.viewport.Width = msg.Width - 2
+		m.viewport.Height = msg.Height - 6
+		
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, vpCmd)
+		
+		return m, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
 		if msg.String() == "l" || msg.String() == "L" {
 			m.showFullLogs = !m.showFullLogs
+			if m.showFullLogs {
+				m.viewport.GotoBottom()
+			}
 		}
-		return m, nil
+		if m.showFullLogs {
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			cmds = append(cmds, vpCmd)
+		}
+		return m, tea.Batch(cmds...)
+		
+	case progress.FrameMsg:
+		progressModel, cmd := m.progress.Update(msg)
+		m.progress = progressModel.(progress.Model)
+		return m, cmd
+
 	case msgLog:
 		m.logs = append(m.logs, msg.text)
 		if len(m.logs) > 1000 {
 			m.logs = m.logs[len(m.logs)-1000:]
 		}
+		m.viewport.SetContent(strings.Join(m.logs, "\n"))
+		if m.viewport.AtBottom() {
+			m.viewport.GotoBottom()
+		}
 		return m, waitForUpdate(m.updates)
+
 	case msgWorkerUpdate:
-		if msg.workerID >= 0 && msg.workerID < len(m.workers) {
-			m.workers[msg.workerID] = msg.status
+		for len(m.workers) <= msg.workerID {
+			m.workers = append(m.workers, "Idle")
 		}
+		m.workers[msg.workerID] = msg.status
 		return m, waitForUpdate(m.updates)
-	case msgInitWorkers:
-		m.workers = make([]string, msg.count)
-		for i := 0; i < msg.count; i++ {
-			m.workers[i] = "Idle"
-		}
-		return m, waitForUpdate(m.updates)
+
 	case msgProgress:
 		m.convertedFiles = msg.completed
 		m.totalFiles = msg.total
-		return m, waitForUpdate(m.updates)
+		pct := 0.0
+		if m.totalFiles > 0 {
+			pct = float64(m.convertedFiles) / float64(m.totalFiles)
+		}
+		return m, tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
+
 	case msgStepAdvance:
 		m.currentStep = msg.step
 		return m, waitForUpdate(m.updates)
+
+	case msgInitWorkers:
+		m.workers = make([]string, msg.count)
+		for i := 0; i < msg.count; i++ {
+			m.workers[i] = "Starting..."
+		}
+		return m, waitForUpdate(m.updates)
+
 	case msgError:
 		return m, func() tea.Msg { return msg }
 	case msgConversionDone:
 		m.currentStep = 6
 		return m, func() tea.Msg { return msg }
 	}
-	return m, nil
+	
+	if m.showFullLogs {
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, vpCmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m *ProgressModel) View() string {
-	b := &strings.Builder{}
-
 	if m.showFullLogs {
-		fmt.Fprintf(b, "%s\n\n", titleStyle.Render("C O N V E R T I N G   A U D I O B O O K   -   L O G S"))
-		for _, l := range m.logs {
-			fmt.Fprintf(b, "%s\n", l)
-		}
-		fmt.Fprintf(b, "\n%s\n", helpStyle.Render("Press 'l' to return to dashboard"))
-		return b.String()
+		title := titleStyle.Render("C O N V E R T I N G   A U D I O B O O K   -   L O G S")
+		help := helpStyle.Render("Press 'l' to return to dashboard • Arrows/Scroll to navigate logs")
+		return lipgloss.JoinVertical(lipgloss.Left, title, "", m.viewport.View(), "", help)
 	}
 
-	fmt.Fprintf(b, "%s\n\n", titleStyle.Render("C O N V E R T I N G   A U D I O B O O K"))
+	title := titleStyle.Render("C O N V E R T I N G   A U D I O B O O K")
 	
-	// Progress Bar
-	pct := 0.0
-	if m.totalFiles > 0 {
-		pct = float64(m.convertedFiles) / float64(m.totalFiles)
-	}
-	
-	barWidth := 40
-	filled := int(float64(barWidth) * pct)
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-	
-	fmt.Fprintf(b, "Progress: [%s] %d%%  (%d/%d Files)\n\n", 
-		lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(bar),
-		int(pct*100), m.convertedFiles, m.totalFiles)
+	progressStr := lipgloss.JoinHorizontal(lipgloss.Left, 
+		m.progress.View(),
+		fmt.Sprintf("  (%d/%d Files)", m.convertedFiles, m.totalFiles),
+	)
 		
-	// Split Layout
-	var left, right strings.Builder
-	
 	// Left: Workers
-	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render("ACTIVE CONVERSION WORKERS") + "\n\n")
+	var workers []string
+	workers = append(workers, lipgloss.NewStyle().Bold(true).Render("ACTIVE CONVERSION WORKERS"), "")
 	for _, w := range m.workers {
 		status := w
 		if len([]rune(status)) > 45 {
 			status = string([]rune(status)[:42]) + "..."
 		}
 		if status == "Idle" {
-			fmt.Fprintf(&left, "  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Idle"))
+			workers = append(workers, "  "+lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Idle"))
 		} else {
-			fmt.Fprintf(&left, "  %s\n", status)
+			workers = append(workers, "  "+status)
 		}
 	}
+	leftStr := lipgloss.NewStyle().Width(50).PaddingRight(5).Render(lipgloss.JoinVertical(lipgloss.Left, workers...))
 	
 	// Right: Checklist
-	fmt.Fprintf(&right, lipgloss.NewStyle().Bold(true).Render("PIPELINE CHECKLIST") + "\n\n")
+	var checklist []string
+	checklist = append(checklist, lipgloss.NewStyle().Bold(true).Render("PIPELINE CHECKLIST"), "")
 	steps := []string{
 		"Check Prerequisites & Scan Directory",
 		"Convert MP3s to M4A (Parallel)",
@@ -172,21 +225,32 @@ func (m *ProgressModel) View() string {
 		} else if i == m.currentStep {
 			status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("[❯]")
 		}
-		fmt.Fprintf(&right, "%s %s\n", status, s)
+		checklist = append(checklist, fmt.Sprintf("%s %s", status, s))
 	}
+	rightStr := lipgloss.JoinVertical(lipgloss.Left, checklist...)
 	
-	leftStr := lipgloss.NewStyle().Width(50).PaddingRight(4).Render(left.String())
-	fmt.Fprintf(b, "%s\n\n", lipgloss.JoinHorizontal(lipgloss.Top, leftStr, right.String()))
+	// Render columns side by side
+	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, rightStr)
 	
 	// Bottom: Logs
-	fmt.Fprintf(b, "%s\n", lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS (Press 'l' to expand)"))
+	var logLines []string
+	logLines = append(logLines, lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS (Press 'l' to expand)"))
 	start := 0
 	if len(m.logs) > 5 {
 		start = len(m.logs) - 5
 	}
 	for i := start; i < len(m.logs); i++ {
-		fmt.Fprintf(b, "%s\n", m.logs[i])
+		logLines = append(logLines, m.logs[i])
 	}
+	logsStr := lipgloss.JoinVertical(lipgloss.Left, logLines...)
 
-	return b.String()
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		progressStr,
+		"",
+		split,
+		"",
+		logsStr,
+	)
 }
