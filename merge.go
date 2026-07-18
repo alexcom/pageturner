@@ -3,10 +3,11 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 )
 const fileListFileName = "filelist.txt"
 
-func merge(convertDir, filename, cover string) (err error) {
+func merge(convertDir, filename, cover string, updates chan<- tea.Msg) (err error) {
 	listFileName, err := generateMergeFileList(convertDir)
 	if err != nil {
 		return
@@ -31,7 +32,9 @@ func merge(convertDir, filename, cover string) (err error) {
 	defer func() {
 		err := os.Remove(listFileName)
 		if err != nil {
-			log.Println("WARN", listFileName, "was not deleted")
+			if updates != nil {
+				updates <- msgLog{text: "WARN " + listFileName + " was not deleted"}
+			}
 		} else {
 			cleanupState.setMergeList("")
 		}

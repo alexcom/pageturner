@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const ffmetadataTemplate = `;FFMETADATA1
@@ -111,7 +112,7 @@ func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer,
 	return outCh, nil
 }
 
-func generateFFMETA(convertDir string) (filename string, err error) {
+func generateFFMETA(convertDir string, config ConversionConfig, updates chan<- tea.Msg) (filename string, err error) {
 	fileBytesChan, err := readMetadataFromFilesWithExtension(convertDir, ".m4a")
 	if err != nil {
 		return
@@ -141,6 +142,11 @@ func generateFFMETA(convertDir string) (filename string, err error) {
 	}
 	removeNonWhitelistedTags(&tagBag)
 	setPredefinedTags(&tagBag)
+	
+	if config.Artist != "" { tagBag.Format.Tags["artist"] = config.Artist }
+	if config.Album != "" { tagBag.Format.Tags["album"] = config.Album }
+	if config.Title != "" { tagBag.Format.Tags["title"] = config.Title }
+
 	data := struct {
 		Chapters   []track
 		CommonMeta map[string]string
@@ -158,19 +164,17 @@ func generateFFMETA(convertDir string) (filename string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return outName(tagBag.Format.Tags), nil
+	return outName(tagBag.Format.Tags, updates), nil
 }
 
 func setPredefinedTags(t *tagsContainer) {
-	t.Format.Tags["genre"] = "Audiobook" // 183 Winamp style according to Wikipedia
-	// BookPlayer apparently uses title from file meta or filename if title empty
-	// Apple Books seem to use album.
+	t.Format.Tags["genre"] = "Audiobook"
 	if album, ok := t.Format.Tags["album"]; ok && album != "" {
 		t.Format.Tags["title"] = album
 	}
 }
 
-func outName(tags map[string]string) string {
+func outName(tags map[string]string, updates chan<- tea.Msg) string {
 	var result string
 	if artist, ok := tags["artist"]; ok {
 		if album, ok := tags["album"]; ok {
@@ -182,7 +186,9 @@ func outName(tags map[string]string) string {
 		if err == nil {
 			result = filepath.Base(wd) + ".m4b"
 		} else {
-			log.Print(err)
+			if updates != nil {
+				updates <- msgLog{text: err.Error()}
+			}
 			result = "book.m4b"
 		}
 	}
@@ -245,10 +251,10 @@ func parseAppendDuration(prevEnd int, durationString string) (rStart int, rEnd i
 
 func listFilesByExt(dir, ext string) []string {
 	dirContent, err := os.ReadDir(dir)
-	if err != nil {
-		log.Fatal(err)
-	}
 	var result []string
+	if err != nil {
+		return result
+	}
 	for _, file := range dirContent {
 		if file.IsDir() {
 			continue
@@ -261,7 +267,6 @@ func listFilesByExt(dir, ext string) []string {
 }
 
 func getMetaJsonBytes(dir, filename string) (bb bytes.Buffer, err error) {
-	log.Println("extracting meta from", filename)
 	const commandStart = "ffprobe -hide_banner -of json -v quiet -show_entries format"
 	commandArr := strings.FieldsFunc(commandStart, func(a rune) bool {
 		return a == ' '

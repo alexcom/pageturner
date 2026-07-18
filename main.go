@@ -4,8 +4,9 @@ import (
 	"flag"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
@@ -23,100 +24,43 @@ func collectArguments() Arguments {
 
 func main() {
 	setupSignalHandler()
-	arguments := collectArguments()
-	checkPrerequisites()
-	tempDir := os.TempDir()
-	convertDir, err := os.MkdirTemp(tempDir, "pageturner")
-	if err != nil {
-		log.Fatalln(err)
+	
+	args := os.Args[1:]
+	var mode string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		mode = args[0]
 	}
-	cleanupState.setConvertDir(convertDir)
-	defer func() {
-		err := os.RemoveAll(convertDir)
-		if err != nil {
-			log.Println("WARN", err)
+
+	wd := getWd()
+	var initialState state
+
+	if mode == "go" {
+		initialState = stateDashboard
+	} else if mode == "gogogo" {
+		initialState = stateProgress
+	} else if mode == "fm" {
+		initialState = stateFileManager
+	} else {
+		files := listFilesByExt(wd, ".mp3")
+		if len(files) > 0 {
+			initialState = stateDashboard
+		} else {
+			initialState = stateFileManager
 		}
-	}()
-	log.Println("Detecting bitrate")
-	bitrate := detectBitrate()
-	log.Println("Converting files")
-	if err = parallelConvert(convertDir, bitrate); err != nil {
-		log.Fatal(err)
 	}
-	log.Println("Generating metadata file")
-	outFilename, err := generateFFMETA(convertDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-	cleanupState.setMetadata(metadataFileName)
-	cleanupState.setOut(outFilename)
-	log.Println("Searching for cover")
-	cover, tempCover := resolveCover()
-	log.Println("Merging files with metadata")
-	if err = merge(convertDir, outFilename, cover); err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Cleaning up")
-	err = cleanup(convertDir, tempCover)
-	if err != nil {
-		log.Fatal(err)
-	}
-	cleanupState.setCover("")
-	cleanupState.setOut("")
-	cleanupState.setMetadata("")
-	if arguments.RemoveSource {
-		log.Println("source removal requested")
-		removeSourceFiles()
+
+	p := tea.NewProgram(newUI(initialState, wd), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		log.Fatalf("Alas, there's been an error: %v", err)
 	}
 }
 
-func removeSourceFiles() {
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-	entries, err := os.ReadDir(wd)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mp3") {
-			err = os.Remove(filepath.Join(wd, entry.Name()))
-			if err != nil {
-				log.Printf("error when deleting the source file \"%s\" : %v \n", entry.Name(), err)
-			}
-		}
-	}
-}
 
-func cleanup(convertDir string, cover string) error {
-	files, err := os.ReadDir(convertDir)
-	if err != nil {
-		return err
-	}
-	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(f.Name(), ".m4a") {
-			err = os.Remove(filepath.Join(convertDir, f.Name()))
-			if err != nil {
-				log.Println("WARN", err)
-			}
-		}
-	}
-	if err = os.Remove(metadataFileName); err != nil {
-		log.Println("WARN", err)
-	}
-	if cover != "" {
-		if err = os.Remove(cover); err != nil {
-			log.Println("WARN", err)
-		}
-	}
-	return nil
-}
 
 func getWd() string {
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		return "."
 	}
 	return wd
 }

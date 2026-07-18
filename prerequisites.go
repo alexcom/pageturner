@@ -1,19 +1,23 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os/exec"
 )
 
-func checkPrerequisites() {
-	detect("ffmpeg")
-	detect("ffprobe")
+func checkPrerequisites() error {
+	if err := detect("ffmpeg"); err != nil {
+		return err
+	}
+	if err := detect("ffprobe"); err != nil {
+		return err
+	}
+	return nil
 }
 
-func detect(command string) {
+func detect(command string) error {
 	if _, err := exec.LookPath(command); err != nil {
-		log.Fatal(command, "executable not found in $PATH")
-	} else {
-		log.Println(command, "found")
+		return fmt.Errorf("%s executable not found in $PATH", command)
 	}
+	return nil
 }
