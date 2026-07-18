@@ -66,6 +66,8 @@ type msgSwitchToDashboard struct {
 	dir string
 }
 
+type msgSwitchToFileManager struct{}
+
 type ConversionConfig struct {
 	TargetDir    string
 	Album        string
@@ -109,6 +111,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateDashboard
 		m.dashboard = newDashboardModel(msg.dir)
 		return m, m.dashboard.Init()
+
+	case msgSwitchToFileManager:
+		m.state = stateFileManager
+		if m.fileManager == nil {
+			m.fileManager = newFileManagerModel(m.dashboard.dir)
+		}
+		return m, m.fileManager.Init()
 
 	case msgStartConversion:
 		m.state = stateProgress

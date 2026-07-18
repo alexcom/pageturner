@@ -180,6 +180,8 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "esc":
+			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		case "tab", "shift+tab", "up", "down":
 			s := msg.String()
 			
@@ -295,15 +297,23 @@ func (m *DashboardModel) View() string {
 			if m.focusIndex == dashFileList {
 				prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("┃ ")
 			}
-			fmt.Fprintf(&left, "%s%d. %s\n", prefix, i+1, displayFiles[i])
+			fname := displayFiles[i]
+			if len([]rune(fname)) > 38 {
+				fname = string([]rune(fname)[:35]) + "..."
+			}
+			fmt.Fprintf(&left, "%s%s\n", prefix, fname)
 		}
 		fmt.Fprintf(&left, "   ... %d of %d \n", end, len(displayFiles))
 	} else if len(displayFiles) == 0 {
 		fmt.Fprintf(&left, "  No MP3 files found.\n")
 		for i := 0; i < 10; i++ { fmt.Fprintf(&left, "\n") }
 	} else {
-		for i, f := range displayFiles {
-			fmt.Fprintf(&left, "  %d. %s\n", i+1, f)
+		for _, f := range displayFiles {
+			fname := f
+			if len([]rune(fname)) > 38 {
+				fname = string([]rune(fname)[:35]) + "..."
+			}
+			fmt.Fprintf(&left, "  %s\n", fname)
 		}
 		for i := len(displayFiles); i < 10; i++ { fmt.Fprintf(&left, "\n") }
 		fmt.Fprintf(&left, "\n")

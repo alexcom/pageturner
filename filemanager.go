@@ -93,8 +93,18 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadDir(filepath.Join(m.dir, entry.Name()))
 				}
 			}
-		case "o", "space": // Open current dir
-			return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+		case "o", "space": // Open selected dir
+			if m.cursor == 0 {
+				return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+			} else {
+				entry := m.entries[m.cursor-1]
+				if entry.IsDir() {
+					selectedDir := filepath.Join(m.dir, entry.Name())
+					return m, func() tea.Msg { return msgSwitchToDashboard{dir: selectedDir} }
+				} else {
+					return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
+				}
+			}
 		}
 	}
 	return m, nil
