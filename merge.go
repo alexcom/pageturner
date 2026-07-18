@@ -27,10 +27,13 @@ func merge(convertDir, filename, cover string) (err error) {
 	if err != nil {
 		return
 	}
+	cleanupState.setMergeList(listFileName)
 	defer func() {
 		err := os.Remove(listFileName)
 		if err != nil {
 			log.Println("WARN", listFileName, "was not deleted")
+		} else {
+			cleanupState.setMergeList("")
 		}
 	}()
 	script := []string{

@@ -22,6 +22,7 @@ func collectArguments() Arguments {
 }
 
 func main() {
+	setupSignalHandler()
 	arguments := collectArguments()
 	checkPrerequisites()
 	tempDir := os.TempDir()
@@ -29,6 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	cleanupState.setConvertDir(convertDir)
 	defer func() {
 		err := os.RemoveAll(convertDir)
 		if err != nil {
@@ -46,17 +48,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanupState.setMetadata(metadataFileName)
+	cleanupState.setOut(outFilename)
 	log.Println("Searching for cover")
-	cover := resolveCover()
+	cover, tempCover := resolveCover()
 	log.Println("Merging files with metadata")
 	if err = merge(convertDir, outFilename, cover); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Cleaning up")
-	err = cleanup(convertDir)
+	err = cleanup(convertDir, tempCover)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanupState.setCover("")
+	cleanupState.setOut("")
+	cleanupState.setMetadata("")
 	if arguments.RemoveSource {
 		log.Println("source removal requested")
 		removeSourceFiles()
@@ -82,7 +89,7 @@ func removeSourceFiles() {
 	}
 }
 
-func cleanup(convertDir string) error {
+func cleanup(convertDir string, cover string) error {
 	files, err := os.ReadDir(convertDir)
 	if err != nil {
 		return err
@@ -97,6 +104,11 @@ func cleanup(convertDir string) error {
 	}
 	if err = os.Remove(metadataFileName); err != nil {
 		log.Println("WARN", err)
+	}
+	if cover != "" {
+		if err = os.Remove(cover); err != nil {
+			log.Println("WARN", err)
+		}
 	}
 	return nil
 }

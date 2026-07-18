@@ -17,14 +17,15 @@ const (
 	noAudio      = "-an"
 )
 
-func resolveCover() string {
+func resolveCover() (coverPath string, tempCoverPath string) {
 	if name, err := findCover(); err == nil && name != "" {
-		return name
+		return name, ""
 	} else if err != nil {
 		log.Println("failed to find cover because: ", err)
 	}
 	if name := extractCover(); name != "" {
-		return name
+		cleanupState.setCover(name)
+		return name, name
 	}
 	if len(defaultCoverBytes) == 0 {
 		log.Fatal("embedded default cover not found")
@@ -33,7 +34,8 @@ func resolveCover() string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return defaultCover
+	cleanupState.setCover(defaultCover)
+	return defaultCover, defaultCover
 }
 
 const extractedCoverName = "cover.jpg"
