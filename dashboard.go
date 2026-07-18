@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -17,6 +18,7 @@ type DashboardModel struct {
 
 	// Left column
 	files          []string
+	fileOffset     int
 	bitrate        int
 	removeSource   bool
 
@@ -32,7 +34,8 @@ type DashboardModel struct {
 }
 
 const (
-	dashInputArtist = iota
+	dashFileList = iota
+	dashInputArtist
 	dashInputAlbum
 	dashInputTitle
 	dashInputOutFilename
@@ -44,10 +47,14 @@ const (
 func newDashboardModel(dir string) *DashboardModel {
 	m := &DashboardModel{
 		dir:    dir,
-		inputs: make([]textinput.Model, 4),
+		inputs: make([]textinput.Model, 5),
 	}
 
 	for i := range m.inputs {
+		if i == dashFileList {
+			continue
+		}
+		
 		t := textinput.New()
 		t.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 		t.CharLimit = 128
@@ -116,7 +123,9 @@ func (m *DashboardModel) scanDirectory() {
 
 	m.covers = []string{"Default Cover"}
 	// Extracted cover if possible
-	m.covers = append(m.covers, "Extract from MP3")
+	if len(m.files) > 0 && hasCoverImage(m.dir, m.files[0]) {
+		m.covers = append(m.covers, "Extract from MP3")
+	}
 	
 	// Add other jpgs in the directory
 	dirContent, _ := os.ReadDir(m.dir)
@@ -125,6 +134,15 @@ func (m *DashboardModel) scanDirectory() {
 			m.covers = append(m.covers, file.Name())
 		}
 	}
+}
+
+func hasCoverImage(dir, filename string) bool {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", filepath.Join(dir, filename))
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "video"
 }
 
 func (m *DashboardModel) getConfig() ConversionConfig {
@@ -165,6 +183,20 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab", "shift+tab", "up", "down":
 			s := msg.String()
 			
+			if m.focusIndex == dashFileList && (s == "up" || s == "down") {
+				if s == "up" {
+					if m.fileOffset > 0 {
+						m.fileOffset--
+						return m, nil
+					}
+				} else {
+					if m.fileOffset < len(m.files)-10 {
+						m.fileOffset++
+						return m, nil
+					}
+				}
+			}
+			
 			// Adjust focus
 			if s == "up" || s == "shift+tab" {
 				m.focusIndex--
@@ -179,7 +211,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			
 			cmds := make([]tea.Cmd, len(m.inputs))
-			for i := 0; i <= dashInputOutFilename; i++ {
+			for i := dashInputArtist; i <= dashInputOutFilename; i++ {
 				if i == m.focusIndex {
 					cmds[i] = m.inputs[i].Focus()
 				} else {
@@ -222,6 +254,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	for i := range m.inputs {
+		if i == dashFileList { continue }
 		if m.focusIndex == i {
 			var cmd tea.Cmd
 			m.inputs[i], cmd = m.inputs[i].Update(msg)
@@ -241,19 +274,39 @@ func (m *DashboardModel) View() string {
 	var left, right strings.Builder
 	
 	// Left: Discovered files
-	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render("DISCOVERED MP3 FILES") + "\n\n")
+	fileListTitle := "DISCOVERED MP3 FILES"
+	if m.focusIndex == dashFileList {
+		fileListTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("> " + fileListTitle)
+	} else {
+		fileListTitle = "  " + fileListTitle
+	}
+	fmt.Fprintf(&left, lipgloss.NewStyle().Bold(true).Render(fileListTitle) + "\n\n")
+	
 	displayFiles := m.files
+	start := m.fileOffset
+	end := start + 10
+	if end > len(displayFiles) {
+		end = len(displayFiles)
+	}
+
 	if len(displayFiles) > 10 {
-		for i := 0; i < 9; i++ {
-			fmt.Fprintf(&left, "%d. %s\n", i+1, displayFiles[i])
+		for i := start; i < end; i++ {
+			prefix := "  "
+			if m.focusIndex == dashFileList {
+				prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("┃ ")
+			}
+			fmt.Fprintf(&left, "%s%d. %s\n", prefix, i+1, displayFiles[i])
 		}
-		fmt.Fprintf(&left, "... and %d more\n", len(displayFiles)-9)
+		fmt.Fprintf(&left, "   ... %d of %d \n", end, len(displayFiles))
 	} else if len(displayFiles) == 0 {
-		fmt.Fprintf(&left, "No MP3 files found.\n")
+		fmt.Fprintf(&left, "  No MP3 files found.\n")
+		for i := 0; i < 10; i++ { fmt.Fprintf(&left, "\n") }
 	} else {
 		for i, f := range displayFiles {
-			fmt.Fprintf(&left, "%d. %s\n", i+1, f)
+			fmt.Fprintf(&left, "  %d. %s\n", i+1, f)
 		}
+		for i := len(displayFiles); i < 10; i++ { fmt.Fprintf(&left, "\n") }
+		fmt.Fprintf(&left, "\n")
 	}
 	
 	fmt.Fprintf(&left, "\nDetected Bitrate: Unknown\n")
@@ -269,12 +322,12 @@ func (m *DashboardModel) View() string {
 	
 	// Right: Metadata
 	fmt.Fprintf(&right, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION") + "\n\n")
-	for i := 0; i <= dashInputOutFilename; i++ {
+	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
 		prefix := "  "
 		if m.focusIndex == i {
 			prefix = "> "
 		}
-		label := []string{"Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
+		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
 		fmt.Fprintf(&right, "%s%s%s\n", prefix, label, m.inputs[i].View())
 	}
 	
