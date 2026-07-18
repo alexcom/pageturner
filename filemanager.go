@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +33,25 @@ func (i item) Description() string {
 }
 func (i item) FilterValue() string { return i.name }
 
+var fmKeys = struct {
+	Open key.Binding
+	Back key.Binding
+	Dir  key.Binding
+}{
+	Open: key.NewBinding(
+		key.WithKeys("enter", "o", " "),
+		key.WithHelp("space/enter", "open"),
+	),
+	Back: key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("←/h", "back"),
+	),
+	Dir: key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "enter dir"),
+	),
+}
+
 type FileManagerModel struct {
 	dir  string
 	list list.Model
@@ -55,6 +75,11 @@ func newFileManagerModel(dir string) *FileManagerModel {
 		Background(lipgloss.Color("6")). // Cyan
 		Foreground(lipgloss.Color("0")). // Black text
 		Padding(0, 1)
+
+	m.list.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{fmKeys.Open, fmKeys.Back}
+	}
+	m.list.AdditionalFullHelpKeys = m.list.AdditionalShortHelpKeys
 
 	m.loadDir(dir)
 	return m
@@ -110,14 +135,13 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// We only intercept keys for directory traversal and selection.
 		// Navigation (up/down/j/k) and filtering are handled by m.list.Update
 		if !m.list.SettingFilter() {
-			switch msg.String() {
-			case "left", "h":
+			if key.Matches(msg, fmKeys.Back) {
 				parentDir := filepath.Dir(m.dir)
 				if parentDir != m.dir {
 					m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
 				}
 				return m, nil
-			case "right", "l":
+			} else if key.Matches(msg, fmKeys.Dir) {
 				if i, ok := m.list.SelectedItem().(item); ok {
 					if i.name == ".." {
 						parentDir := filepath.Dir(m.dir)
@@ -129,7 +153,7 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "enter", "o", " ": // Open selected dir or file's dir
+			} else if key.Matches(msg, fmKeys.Open) {
 				if i, ok := m.list.SelectedItem().(item); ok {
 					if i.name == ".." {
 						return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }

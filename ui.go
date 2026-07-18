@@ -2,9 +2,19 @@ package main
 
 
 import (
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+var uiKeys = struct {
+	Quit key.Binding
+}{
+	Quit: key.NewBinding(
+		key.WithKeys("ctrl+c", "q"),
+		key.WithHelp("q", "quit"),
+	),
+}
 
 type state int
 
@@ -97,7 +107,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.err != nil || m.done {
 			return m, tea.Quit
 		}
-		if msg.String() == "ctrl+c" || msg.String() == "q" {
+		if key.Matches(msg, uiKeys.Quit) {
 			return m, tea.Quit
 		}
 	case msgError:

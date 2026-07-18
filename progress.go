@@ -4,11 +4,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+var progKeys = struct {
+	ToggleLogs key.Binding
+}{
+	ToggleLogs: key.NewBinding(
+		key.WithKeys("l", "L"),
+		key.WithHelp("l", "toggle logs"),
+	),
+}
 
 type msgLog struct {
 	text string
@@ -105,7 +115,7 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
-		if msg.String() == "l" || msg.String() == "L" {
+		if key.Matches(msg, progKeys.ToggleLogs) {
 			m.showFullLogs = !m.showFullLogs
 			if m.showFullLogs {
 				m.viewport.GotoBottom()

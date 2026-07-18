@@ -8,10 +8,50 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+var dashKeys = struct {
+	Quit    key.Binding
+	NavUp   key.Binding
+	NavDown key.Binding
+	Confirm key.Binding
+	Toggle  key.Binding
+	Left    key.Binding
+	Right   key.Binding
+}{
+	Quit: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "back"),
+	),
+	NavUp: key.NewBinding(
+		key.WithKeys("up", "shift+tab"),
+		key.WithHelp("↑/shift+tab", "up"),
+	),
+	NavDown: key.NewBinding(
+		key.WithKeys("down", "tab"),
+		key.WithHelp("↓/tab", "down"),
+	),
+	Confirm: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "confirm"),
+	),
+	Toggle: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "toggle"),
+	),
+	Left: key.NewBinding(
+		key.WithKeys("left"),
+		key.WithHelp("←", "left"),
+	),
+	Right: key.NewBinding(
+		key.WithKeys("right"),
+		key.WithHelp("→", "right"),
+	),
+}
 
 type DashboardModel struct {
 	dir string
@@ -179,14 +219,13 @@ func (m *DashboardModel) Init() tea.Cmd {
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc":
+		if key.Matches(msg, dashKeys.Quit) {
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
-		case "tab", "shift+tab", "up", "down":
-			s := msg.String()
+		} else if key.Matches(msg, dashKeys.NavUp, dashKeys.NavDown) {
+			isUp := key.Matches(msg, dashKeys.NavUp)
 			
-			if m.focusIndex == dashFileList && (s == "up" || s == "down") {
-				if s == "up" {
+			if m.focusIndex == dashFileList && (msg.String() == "up" || msg.String() == "down") {
+				if isUp {
 					if m.fileOffset > 0 {
 						m.fileOffset--
 						return m, nil
@@ -200,7 +239,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			
 			// Adjust focus
-			if s == "up" || s == "shift+tab" {
+			if isUp {
 				m.focusIndex--
 			} else {
 				m.focusIndex++
@@ -221,18 +260,15 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
-			
-		case "enter":
+		} else if key.Matches(msg, dashKeys.Confirm) {
 			return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
-		
-		case " ":
+		} else if key.Matches(msg, dashKeys.Toggle) {
 			if m.focusIndex == dashRemoveSourceToggle {
 				m.removeSource = !m.removeSource
 			}
-			
-		case "left", "right":
+		} else if key.Matches(msg, dashKeys.Left, dashKeys.Right) {
 			if m.focusIndex == dashCoverSelection {
-				if msg.String() == "left" {
+				if key.Matches(msg, dashKeys.Left) {
 					m.coverIndex--
 					if m.coverIndex < 0 {
 						m.coverIndex = len(m.covers) - 1
