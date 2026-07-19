@@ -267,7 +267,7 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 	var coverItems []list.Item
 	coverItems = append(coverItems, simpleItem("Default Cover"))
 	// Extracted cover if possible
-	if len(m.files) > 0 && hasCoverImage(m.dir, m.files[0]) {
+	if len(m.files) > 0 && hasCoverImage(ctx, m.dir, m.files[0]) {
 		coverItems = append(coverItems, simpleItem("Extract from MP3"))
 	}
 
@@ -283,8 +283,8 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 	m.coverList.SetHeight(len(coverItems))
 }
 
-func hasCoverImage(dir, filename string) bool {
-	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", filepath.Join(dir, filename))
+func hasCoverImage(ctx context.Context, dir, filename string) bool {
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", filepath.Join(dir, filename))
 	out, err := cmd.Output()
 	if err != nil {
 		return false
