@@ -109,7 +109,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if key.Matches(msg, uiKeys.Quit) {
-			return m, tea.Quit
+			if msg.String() == "q" && m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText() {
+				// Let the dashboard text inputs handle the "q" keystroke
+			} else {
+				return m, tea.Quit
+			}
 		}
 	case msgError:
 		m.err = msg.err

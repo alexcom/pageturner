@@ -210,6 +210,10 @@ func (m *DashboardModel) updateViewport() {
 	m.fileViewport.SetContent(strings.Join(listLines, "\n"))
 }
 
+func (m *DashboardModel) IsEditingText() bool {
+	return m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename
+}
+
 func (m *DashboardModel) scanDirectory() {
 	m.files = listFilesByExt(m.dir, ".mp3")
 	m.updateViewport()
