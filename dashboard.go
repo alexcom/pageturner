@@ -254,11 +254,11 @@ func (m *DashboardModel) scanDirectory() {
 
 		outName := ""
 		if artist != "" && album != "" {
-			outName = fmt.Sprintf("%s - %s.m4b", artist, album)
+			outName = fmt.Sprintf("%s - %s", artist, album)
 		} else if album != "" {
-			outName = fmt.Sprintf("%s.m4b", album)
+			outName = fmt.Sprintf("%s", album)
 		} else {
-			outName = filepath.Base(m.dir) + ".m4b"
+			outName = filepath.Base(m.dir)
 		}
 		m.inputs[dashInputOutFilename].SetValue(strings.ReplaceAll(outName, string(filepath.Separator), "_"))
 	}
@@ -294,11 +294,10 @@ func hasCoverImage(dir, filename string) bool {
 func (m *DashboardModel) getConfig() ConversionConfig {
 	outFn := m.inputs[dashInputOutFilename].Value()
 	if outFn == "" {
-		outFn = "book.m4b"
+		outFn = "book"
 	}
-	if !strings.HasSuffix(outFn, ".m4b") {
-		outFn += ".m4b"
-	}
+	outFn = strings.TrimSuffix(outFn, ".m4b")
+	outFn += ".m4b"
 
 	var coverSrc string
 	if sel := m.coverList.SelectedItem(); sel != nil {
@@ -473,7 +472,12 @@ func (m *DashboardModel) View() string {
 			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
 		}
 		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
-		right = append(right, prefix+label+m.inputs[i].View())
+		
+		inputView := m.inputs[i].View()
+		if i == dashInputOutFilename {
+			inputView += lipgloss.NewStyle().Foreground(subtextColor).Render(".m4b")
+		}
+		right = append(right, prefix+label+inputView)
 	}
 
 	right = append(right, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
