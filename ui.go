@@ -265,20 +265,6 @@ func (m *UI) View() string {
 			))
 		
 		baseView = baseView + "\n\n" + errorBox
-	} else if m.done {
-		successBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("10")). // Green
-			Padding(1, 2).
-			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")).Render("CONVERSION COMPLETE"),
-				"",
-				"Your audiobook has been created successfully!",
-				"",
-				helpStyle.Render("Press any key to exit"),
-			))
-		
-		baseView = baseView + "\n\n" + successBox
 	}
 
 	if baseView == "" {

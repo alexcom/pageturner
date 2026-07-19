@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -13,12 +14,28 @@ import (
 
 var progKeys = struct {
 	ToggleLogs key.Binding
+	Quit       key.Binding
 }{
 	ToggleLogs: key.NewBinding(
 		key.WithKeys("l", "L"),
 		key.WithHelp("l", "toggle logs"),
 	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
 }
+
+type progressKeyMap struct{}
+
+func (k progressKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{progKeys.ToggleLogs, progKeys.Quit}
+}
+func (k progressKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{k.ShortHelp()}
+}
+
+var progHelpKeys = progressKeyMap{}
 
 type msgLog struct {
 	text string
@@ -59,6 +76,7 @@ type ProgressModel struct {
 
 	progress progress.Model
 	viewport viewport.Model
+	help     help.Model
 }
 
 func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
@@ -79,7 +97,12 @@ func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
 		updates:    make(chan tea.Msg),
 		progress:   prog,
 		viewport:   vp,
+		help:       help.New(),
 	}
+	m.help.Styles.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
+	m.help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(subtextColor)
+	m.help.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
+
 	m.viewport.SetContent(strings.Join(m.logs, "\n"))
 	return m
 }
@@ -108,7 +131,8 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		titleHeight := 4 // 3 for header box + 1 for spacing
 		m.viewport.Width = msg.Width - h - 2
-		m.viewport.Height = msg.Height - v - titleHeight - 2
+		m.viewport.Height = msg.Height - v - titleHeight - 4
+		m.help.Width = msg.Width
 		
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
@@ -190,22 +214,31 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *ProgressModel) View() string {
 	if m.showFullLogs {
-		help := helpStyle.Render("Press 'l' to return to dashboard • Arrows/Scroll to navigate logs")
-		return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), "", help)
+		return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), "", m.help.View(progHelpKeys))
+	}
+
+	statusText := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Working...")
+	if m.currentStep >= 6 {
+		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("Complete")
 	}
 
 	progressStr := lipgloss.JoinHorizontal(lipgloss.Left, 
 		m.progress.View(),
-		fmt.Sprintf("  (%d/%d Files)", m.convertedFiles, m.totalFiles),
+		fmt.Sprintf("  (%d/%d Files) - %s", m.convertedFiles, m.totalFiles, statusText),
 	)
-		
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(primaryColor).
+		Padding(0, 1)
+
 	// Left: Workers
 	var workers []string
 	workers = append(workers, lipgloss.NewStyle().Bold(true).Render("ACTIVE CONVERSION WORKERS"), "")
 	for _, w := range m.workers {
 		status := w
-		if len([]rune(status)) > 45 {
-			status = string([]rune(status)[:42]) + "..."
+		if len([]rune(status)) > 40 {
+			status = string([]rune(status)[:37]) + "..."
 		}
 		if status == "Idle" {
 			workers = append(workers, "  "+lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Idle"))
@@ -213,7 +246,11 @@ func (m *ProgressModel) View() string {
 			workers = append(workers, "  "+status)
 		}
 	}
-	leftStr := lipgloss.NewStyle().Width(50).PaddingRight(5).Render(lipgloss.JoinVertical(lipgloss.Left, workers...))
+	leftWidth := (m.progress.Width / 2) - 3
+	if leftWidth < 10 {
+		leftWidth = 10
+	}
+	leftStr := panelStyle.Width(leftWidth).Render(lipgloss.JoinVertical(lipgloss.Left, workers...))
 	
 	// Right: Checklist
 	var checklist []string
@@ -236,14 +273,18 @@ func (m *ProgressModel) View() string {
 		}
 		checklist = append(checklist, fmt.Sprintf("%s %s", status, s))
 	}
-	rightStr := lipgloss.JoinVertical(lipgloss.Left, checklist...)
+	rightWidth := (m.progress.Width / 2) - 3
+	if rightWidth < 10 {
+		rightWidth = 10
+	}
+	rightStr := panelStyle.Width(rightWidth).Render(lipgloss.JoinVertical(lipgloss.Left, checklist...))
 	
 	// Render columns side by side
-	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, rightStr)
+	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, lipgloss.NewStyle().Width(2).Render(""), rightStr)
 	
 	// Bottom: Logs
 	var logLines []string
-	logLines = append(logLines, lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS (Press 'l' to expand)"))
+	logLines = append(logLines, lipgloss.NewStyle().Bold(true).Render("CONVERSION LOGS (Press 'l' to expand)"), "")
 	start := 0
 	if len(m.logs) > 5 {
 		start = len(m.logs) - 5
@@ -251,7 +292,7 @@ func (m *ProgressModel) View() string {
 	for i := start; i < len(m.logs); i++ {
 		logLines = append(logLines, m.logs[i])
 	}
-	logsStr := lipgloss.JoinVertical(lipgloss.Left, logLines...)
+	logsStr := panelStyle.Width(m.progress.Width).Render(lipgloss.JoinVertical(lipgloss.Left, logLines...))
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		progressStr,
@@ -259,5 +300,7 @@ func (m *ProgressModel) View() string {
 		split,
 		"",
 		logsStr,
+		"",
+		m.help.View(progHelpKeys),
 	)
 }
