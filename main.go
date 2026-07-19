@@ -23,8 +23,8 @@ func collectArguments() Arguments {
 }
 
 func main() {
-	setupSignalHandler()
-	
+	defer cleanupState.clean()
+
 	args := os.Args[1:]
 	var mode string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -54,8 +54,6 @@ func main() {
 		log.Fatalf("Alas, there's been an error: %v", err)
 	}
 }
-
-
 
 func getWd() string {
 	wd, err := os.Getwd()

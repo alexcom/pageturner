@@ -1,11 +1,8 @@
 package main
 
 import (
-	"log"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 )
 
 type CleanupState struct {
@@ -49,32 +46,23 @@ func (c *CleanupState) setOut(path string) {
 	c.outFile = path
 }
 
-func setupSignalHandler() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		log.Println("\nAborting... cleaning up temporary files")
+func (c *CleanupState) clean() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-		cleanupState.mu.Lock()
-		defer cleanupState.mu.Unlock()
-
-		if cleanupState.convertDir != "" {
-			_ = os.RemoveAll(cleanupState.convertDir)
-		}
-		if cleanupState.metadataFile != "" {
-			_ = os.Remove(cleanupState.metadataFile)
-		}
-		if cleanupState.mergeListFile != "" {
-			_ = os.Remove(cleanupState.mergeListFile)
-		}
-		if cleanupState.coverFile != "" {
-			_ = os.Remove(cleanupState.coverFile)
-		}
-		if cleanupState.outFile != "" {
-			_ = os.Remove(cleanupState.outFile)
-		}
-
-		os.Exit(1)
-	}()
+	if c.convertDir != "" {
+		_ = os.RemoveAll(c.convertDir)
+	}
+	if c.metadataFile != "" {
+		_ = os.Remove(c.metadataFile)
+	}
+	if c.mergeListFile != "" {
+		_ = os.Remove(c.mergeListFile)
+	}
+	if c.coverFile != "" {
+		_ = os.Remove(c.coverFile)
+	}
+	if c.outFile != "" {
+		_ = os.Remove(c.outFile)
+	}
 }
