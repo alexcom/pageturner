@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,7 +68,7 @@ type tagsContainer struct {
 	} `json:"format"`
 }
 
-func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer, err error) {
+func readMetadataFromFilesWithExtension(ctx context.Context, dir, ext string) (_ <-chan bytes.Buffer, err error) {
 	files := listFilesByExt(dir, ext)
 	fileCount := len(files)
 	if fileCount == 0 {
@@ -86,7 +87,7 @@ func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer,
 	for i := 0; i < threads; i++ {
 		go func(input <-chan string, output chan<- bytes.Buffer) {
 			for filename := range input {
-				bb, err := getMetaJsonBytes(dir, filename)
+				bb, err := getMetaJsonBytes(ctx, dir, filename)
 				if err != nil {
 					errCh <- fmt.Errorf("metadata extraction failed for %s: %w", filename, err)
 				} else {
@@ -113,8 +114,8 @@ func readMetadataFromFilesWithExtension(dir, ext string) (_ <-chan bytes.Buffer,
 	return outCh, nil
 }
 
-func generateFFMETA(convertDir string, config ConversionConfig, updates chan<- tea.Msg) (filename string, err error) {
-	fileBytesChan, err := readMetadataFromFilesWithExtension(convertDir, ".m4a")
+func generateFFMETA(ctx context.Context, convertDir string, config ConversionConfig, updates chan<- tea.Msg) (filename string, err error) {
+	fileBytesChan, err := readMetadataFromFilesWithExtension(ctx, convertDir, ".m4a")
 	if err != nil {
 		return
 	}
@@ -267,12 +268,12 @@ func listFilesByExt(dir, ext string) []string {
 	return result
 }
 
-func getMetaJsonBytes(dir, filename string) (bb bytes.Buffer, err error) {
+func getMetaJsonBytes(ctx context.Context, dir, filename string) (bb bytes.Buffer, err error) {
 	const commandStart = "ffprobe -hide_banner -of json -v quiet -show_entries format"
 	commandArr := strings.FieldsFunc(commandStart, func(a rune) bool {
 		return a == ' '
 	})
-	cmd := exec.Command(commandArr[0], append(commandArr[1:], filepath.Join(dir, filename))...)
+	cmd := exec.CommandContext(ctx, commandArr[0], append(commandArr[1:], filepath.Join(dir, filename))...)
 	cmd.Stdout = &bb
 	err = cmd.Run()
 	return

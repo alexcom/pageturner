@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 // runConversionPipeline starts the background process
-func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
+func runConversionPipeline(ctx context.Context, config ConversionConfig, updates chan tea.Msg) {
 	defer close(updates) // signal that the channel is closed if we exit
 
 	updates <- msgLog{text: "Checking prerequisites..."}
@@ -38,14 +39,14 @@ func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
 
 	updates <- msgStepAdvance{step: 1}
 	updates <- msgLog{text: "Converting files..."}
-	if err := parallelConvert(convertDir, config.BitRate, updates); err != nil {
+	if err := parallelConvert(ctx, convertDir, config.BitRate, updates); err != nil {
 		updates <- msgError{err: err}
 		return
 	}
 
 	updates <- msgStepAdvance{step: 2}
 	updates <- msgLog{text: "Resolving cover art..."}
-	cover, tempCover, err := resolveCover(updates)
+	cover, tempCover, err := resolveCover(ctx, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -53,7 +54,7 @@ func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
 
 	updates <- msgStepAdvance{step: 3}
 	updates <- msgLog{text: "Generating metadata file..."}
-	outFilename, err := generateFFMETA(convertDir, config, updates)
+	outFilename, err := generateFFMETA(ctx, convertDir, config, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -69,7 +70,7 @@ func runConversionPipeline(config ConversionConfig, updates chan tea.Msg) {
 
 	updates <- msgStepAdvance{step: 4}
 	updates <- msgLog{text: "Merging files with metadata..."}
-	if err := merge(convertDir, outFilename, cover, updates); err != nil {
+	if err := merge(ctx, convertDir, outFilename, cover, updates); err != nil {
 		updates <- msgError{err: err}
 		return
 	}

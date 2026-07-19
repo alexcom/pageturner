@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -60,6 +61,7 @@ type msgInitWorkers struct {
 }
 
 type ProgressModel struct {
+	ctx    context.Context
 	config ConversionConfig
 
 	totalFiles     int
@@ -79,7 +81,7 @@ type ProgressModel struct {
 	help     help.Model
 }
 
-func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
+func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
 	files := listFilesByExt(getWd(), ".mp3")
 	
 	prog := progress.New(progress.WithDefaultGradient())
@@ -90,6 +92,7 @@ func newProgressModel(dir string, config ConversionConfig) *ProgressModel {
 		PaddingRight(2)
 		
 	m := &ProgressModel{
+		ctx:        ctx,
 		config:     config,
 		totalFiles: len(files),
 		workers:    []string{},
@@ -114,7 +117,7 @@ func waitForUpdate(c chan tea.Msg) tea.Cmd {
 }
 
 func (m *ProgressModel) Init() tea.Cmd {
-	go runConversionPipeline(m.config, m.updates)
+	go runConversionPipeline(m.ctx, m.config, m.updates)
 	return waitForUpdate(m.updates)
 }
 

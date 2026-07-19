@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,7 +28,7 @@ const (
 	outputFmt  = "%s.m4a"
 )
 
-func parallelConvert(convertDir string, aBitrate int, updates chan<- tea.Msg) error {
+func parallelConvert(ctx context.Context, convertDir string, aBitrate int, updates chan<- tea.Msg) error {
 	files := listFilesByExt(getWd(), ".mp3")
 	if len(files) == 0 {
 		return errors.New("no MP3 files discovered in current directory")
@@ -56,7 +57,7 @@ func parallelConvert(convertDir string, aBitrate int, updates chan<- tea.Msg) er
 				if updates != nil {
 					updates <- msgWorkerUpdate{workerID: workerID, status: "Converting " + filename}
 				}
-				err := runScriptArgs(ffmpeg, makeArgs(convertDir, filename, aBitrate), nil)
+				err := runScriptArgs(ctx, ffmpeg, makeArgs(convertDir, filename, aBitrate), nil)
 				if err != nil {
 					errCh <- err
 				} else {
@@ -103,8 +104,8 @@ func makeArgs(convertDir, filename string, aBitRate int) []string {
 
 
 
-func detectBitrate(dir string, updates chan<- tea.Msg) (int, error) {
-	metaBytesChan, err := readMetadataFromFilesWithExtension(dir, ".mp3")
+func detectBitrate(ctx context.Context, dir string, updates chan<- tea.Msg) (int, error) {
+	metaBytesChan, err := readMetadataFromFilesWithExtension(ctx, dir, ".mp3")
 	if err != nil {
 		return 0, err
 	}

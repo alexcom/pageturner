@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ const (
 )
 const fileListFileName = "filelist.txt"
 
-func merge(convertDir, filename, cover string, updates chan<- tea.Msg) (err error) {
+func merge(ctx context.Context, convertDir, filename, cover string, updates chan<- tea.Msg) (err error) {
 	listFileName, err := generateMergeFileList(convertDir)
 	if err != nil {
 		return
@@ -55,7 +56,7 @@ func merge(convertDir, filename, cover string, updates chan<- tea.Msg) (err erro
 		dispositionV0, attachedPic,
 		filename,
 	}
-	return runScriptArgs(script[0], script[1:], nil)
+	return runScriptArgs(ctx, script[0], script[1:], nil)
 }
 
 func generateMergeFileList(convertDir string) (filename string, err error) {

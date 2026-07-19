@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"os"
@@ -19,7 +20,7 @@ const (
 	noAudio      = "-an"
 )
 
-func resolveCover(updates chan<- tea.Msg) (coverPath string, tempCoverPath string, err error) {
+func resolveCover(ctx context.Context, updates chan<- tea.Msg) (coverPath string, tempCoverPath string, err error) {
 	if name, err := findCover(updates); err == nil && name != "" {
 		return name, "", nil
 	} else if err != nil {
@@ -27,7 +28,7 @@ func resolveCover(updates chan<- tea.Msg) (coverPath string, tempCoverPath strin
 			updates <- msgLog{text: "failed to find cover because: " + err.Error()}
 		}
 	}
-	if name := extractCover(updates); name != "" {
+	if name := extractCover(ctx, updates); name != "" {
 		cleanupState.setCover(name)
 		return name, name, nil
 	}
@@ -44,7 +45,7 @@ func resolveCover(updates chan<- tea.Msg) (coverPath string, tempCoverPath strin
 
 const extractedCoverName = "cover.jpg"
 
-func extractCover(updates chan<- tea.Msg) string {
+func extractCover(ctx context.Context, updates chan<- tea.Msg) string {
 	mp3s := listFilesByExt(getWd(), ".mp3")
 	if len(mp3s) == 0 {
 		if updates != nil {
@@ -53,7 +54,7 @@ func extractCover(updates chan<- tea.Msg) string {
 		return ""
 	}
 	script := []string{ffmpeg, confirm, input, mp3s[0], noAudio, extractedCoverName}
-	err := runScriptArgs(script[0], script[1:], nil)
+	err := runScriptArgs(ctx, script[0], script[1:], nil)
 	if err != nil {
 		if updates != nil {
 			updates <- msgLog{text: "cover extraction failed with error: " + err.Error()}

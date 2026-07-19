@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -142,7 +143,7 @@ const (
 	dashStartButton
 )
 
-func newDashboardModel(dir string) *DashboardModel {
+func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m := &DashboardModel{
 		dir:    dir,
 		inputs: make([]textinput.Model, 5),
@@ -184,7 +185,7 @@ func newDashboardModel(dir string) *DashboardModel {
 	}
 
 	m.inputs[dashInputArtist].Focus()
-	m.scanDirectory()
+	m.scanDirectory(ctx)
 	return m
 }
 
@@ -214,13 +215,13 @@ func (m *DashboardModel) IsEditingText() bool {
 	return m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename
 }
 
-func (m *DashboardModel) scanDirectory() {
+func (m *DashboardModel) scanDirectory(ctx context.Context) {
 	m.files = listFilesByExt(m.dir, ".mp3")
 	m.updateViewport()
 
 	if len(m.files) > 0 {
 		artist, album, title := "", "", ""
-		bb, err := getMetaJsonBytes(m.dir, m.files[0])
+		bb, err := getMetaJsonBytes(ctx, m.dir, m.files[0])
 		if err == nil {
 			var fileMeta container
 			if err := json.Unmarshal(bb.Bytes(), &fileMeta); err == nil {
@@ -230,7 +231,7 @@ func (m *DashboardModel) scanDirectory() {
 			}
 		}
 
-		if br, err := detectBitrate(m.dir, nil); err == nil {
+		if br, err := detectBitrate(ctx, m.dir, nil); err == nil {
 			m.bitrate = br
 		}
 

@@ -2,6 +2,8 @@ package main
 
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -26,6 +28,7 @@ const (
 
 // UI is the top-level application model
 type UI struct {
+	ctx         context.Context
 	state       state
 	fileManager *FileManagerModel
 	dashboard   *DashboardModel
@@ -43,8 +46,9 @@ type UI struct {
 	height int
 }
 
-func newUI(initialState state, initialDir string) *UI {
+func newUI(ctx context.Context, initialState state, initialDir string) *UI {
 	m := &UI{
+		ctx:   ctx,
 		state: initialState,
 	}
 
@@ -52,10 +56,10 @@ func newUI(initialState state, initialDir string) *UI {
 	if initialState == stateFileManager {
 		m.fileManager = newFileManagerModel(initialDir)
 	} else if initialState == stateDashboard || initialState == stateProgress {
-		m.dashboard = newDashboardModel(initialDir)
+		m.dashboard = newDashboardModel(ctx, initialDir)
 		if initialState == stateProgress {
 			// Fast forward to progress directly (gogogo)
-			m.progress = newProgressModel(initialDir, m.dashboard.getConfig())
+			m.progress = newProgressModel(ctx, initialDir, m.dashboard.getConfig())
 		}
 	}
 
@@ -163,7 +167,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
-		m.dashboard = newDashboardModel(msg.dir)
+		m.dashboard = newDashboardModel(m.ctx, msg.dir)
 		if m.width != 0 && m.height != 0 {
 			m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}
@@ -181,7 +185,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgStartConversion:
 		m.state = stateProgress
-		m.progress = newProgressModel(msg.config.TargetDir, msg.config)
+		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
 		if m.width != 0 && m.height != 0 {
 			m.progress.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		}

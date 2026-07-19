@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,8 +10,8 @@ import (
 	"time"
 )
 
-func runScriptArgs(script string, args []string, env []string) (err error) {
-	command := exec.Command(script, args...)
+func runScriptArgs(ctx context.Context, script string, args []string, env []string) (err error) {
+	command := exec.CommandContext(ctx, script, args...)
 	command.Env = os.Environ()
 	for _, e := range env {
 		command.Env = append(command.Env, e)
