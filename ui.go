@@ -36,6 +36,9 @@ type UI struct {
 	
 	// Completion state
 	done bool
+
+	width  int
+	height int
 }
 
 func newUI(initialState state, initialDir string) *UI {
@@ -104,6 +107,27 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		
+		if m.fileManager != nil {
+			newModel, cmd := m.fileManager.Update(msg)
+			m.fileManager = newModel.(*FileManagerModel)
+			cmds = append(cmds, cmd)
+		}
+		if m.dashboard != nil {
+			newModel, cmd := m.dashboard.Update(msg)
+			m.dashboard = newModel.(*DashboardModel)
+			cmds = append(cmds, cmd)
+		}
+		if m.progress != nil {
+			newModel, cmd := m.progress.Update(msg)
+			m.progress = newModel.(*ProgressModel)
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
 		if m.err != nil || m.done {
 			return m, tea.Quit
@@ -125,6 +149,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
 		m.dashboard = newDashboardModel(msg.dir)
+		if m.width != 0 && m.height != 0 {
+			m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
 		return m, m.dashboard.Init()
 
 	case msgSwitchToFileManager:
@@ -132,11 +159,17 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fileManager == nil {
 			m.fileManager = newFileManagerModel(m.dashboard.dir)
 		}
+		if m.width != 0 && m.height != 0 {
+			m.fileManager.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
 		return m, m.fileManager.Init()
 
 	case msgStartConversion:
 		m.state = stateProgress
 		m.progress = newProgressModel(msg.config.TargetDir, msg.config)
+		if m.width != 0 && m.height != 0 {
+			m.progress.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
 		return m, m.progress.Init()
 
 	case msgConversionDone:
@@ -169,6 +202,38 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m *UI) headerView() string {
+	titleText := "P A G E T U R N E R"
+	switch m.state {
+	case stateFileManager:
+		titleText += "  -  F i l e   M a n a g e r"
+	case stateDashboard:
+		titleText += "  -  A u d i o b o o k   C o n v e r t e r"
+	case stateProgress:
+		if m.progress != nil && m.progress.showFullLogs {
+			titleText += "  -  C o n v e r t i n g   L o g s"
+		} else {
+			titleText += "  -  C o n v e r t i n g"
+		}
+	}
+
+	h, _ := docStyle.GetFrameSize()
+	w := m.width - h
+	widthToSet := w - 2
+	if widthToSet < 0 {
+		widthToSet = 0
+	}
+
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(primaryColor).
+		Padding(0, 1).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(primaryColor).
+		Width(widthToSet).
+		Render(titleText)
+}
+
 func (m *UI) View() string {
 	var baseView string
 	switch m.state {
@@ -199,10 +264,8 @@ func (m *UI) View() string {
 				helpStyle.Render("Press any key to exit"),
 			))
 		
-		return baseView + "\n\n" + errorBox
-	}
-	
-	if m.done {
+		baseView = baseView + "\n\n" + errorBox
+	} else if m.done {
 		successBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("10")). // Green
@@ -215,16 +278,19 @@ func (m *UI) View() string {
 				helpStyle.Render("Press any key to exit"),
 			))
 		
-		return baseView + "\n\n" + successBox
+		baseView = baseView + "\n\n" + successBox
 	}
 
 	if baseView == "" {
-		return "Unknown state"
+		return docStyle.Render("Unknown state")
 	}
-	return baseView
+
+	header := m.headerView()
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", baseView))
 }
 
-// Global UI Styles
+var docStyle = lipgloss.NewStyle().Margin(1, 2)
+
 var (
 	primaryColor   = lipgloss.Color("#00ADB5")
 	secondaryColor = lipgloss.Color("#393E46")
@@ -235,12 +301,5 @@ var (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(primaryColor).
-			Padding(0, 1).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(primaryColor)
-
 	helpStyle = lipgloss.NewStyle().Foreground(subtextColor)
 )

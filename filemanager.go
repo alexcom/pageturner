@@ -128,7 +128,7 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
 		// Account for the main global title above the list
-		titleHeight := lipgloss.Height(titleStyle.Render("P A G E T U R N E R  -  F i l e   M a n a g e r")) + 1
+		titleHeight := 4 // Bordered box is 3 lines tall, plus 1 line spacing
 		m.list.SetSize(msg.Width-h, msg.Height-v-titleHeight)
 		// We still pass WindowSizeMsg down so the list updates itself.
 	case tea.KeyMsg:
@@ -172,13 +172,6 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-var docStyle = lipgloss.NewStyle().Margin(1, 2)
-
 func (m *FileManagerModel) View() string {
-	title := titleStyle.Render("P A G E T U R N E R  -  F i l e   M a n a g e r")
-	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
-		title,
-		"",
-		m.list.View(),
-	))
+	return m.list.View()
 }

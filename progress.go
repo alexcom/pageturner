@@ -100,13 +100,15 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.progress.Width = msg.Width - 4
+		h, v := docStyle.GetFrameSize()
+		m.progress.Width = msg.Width - h - 4
 		if m.progress.Width > 80 {
 			m.progress.Width = 80
 		}
 		
-		m.viewport.Width = msg.Width - 2
-		m.viewport.Height = msg.Height - 6
+		titleHeight := 4 // 3 for header box + 1 for spacing
+		m.viewport.Width = msg.Width - h - 2
+		m.viewport.Height = msg.Height - v - titleHeight - 2
 		
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
@@ -188,13 +190,10 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *ProgressModel) View() string {
 	if m.showFullLogs {
-		title := titleStyle.Render("C O N V E R T I N G   A U D I O B O O K   -   L O G S")
 		help := helpStyle.Render("Press 'l' to return to dashboard • Arrows/Scroll to navigate logs")
-		return lipgloss.JoinVertical(lipgloss.Left, title, "", m.viewport.View(), "", help)
+		return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), "", help)
 	}
 
-	title := titleStyle.Render("C O N V E R T I N G   A U D I O B O O K")
-	
 	progressStr := lipgloss.JoinHorizontal(lipgloss.Left, 
 		m.progress.View(),
 		fmt.Sprintf("  (%d/%d Files)", m.convertedFiles, m.totalFiles),
@@ -255,8 +254,6 @@ func (m *ProgressModel) View() string {
 	logsStr := lipgloss.JoinVertical(lipgloss.Left, logLines...)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		title,
-		"",
 		progressStr,
 		"",
 		split,

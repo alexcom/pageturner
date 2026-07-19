@@ -431,8 +431,6 @@ func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (m *DashboardModel) View() string {
-	title := titleStyle.Render("P A G E T U R N E R  -  A u d i o b o o k   C o n v e r t e r")
-
 	activeBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor).
@@ -517,8 +515,6 @@ func (m *DashboardModel) View() string {
 	startBtn := startBtnStyle.Render("START CONVERSION (Enter)")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		title,
-		"",
 		split,
 		startBtn,
 		"",
