@@ -37,6 +37,8 @@ type UI struct {
 	// Completion state
 	done bool
 
+	showQuitConfirm bool
+
 	width  int
 	height int
 }
@@ -129,12 +131,25 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
-		if m.err != nil || m.done {
+		if m.showQuitConfirm {
+			if msg.String() == "y" || msg.String() == "Y" {
+				return m, tea.Quit
+			} else if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" || msg.String() == "enter" {
+				m.showQuitConfirm = false
+				return m, nil
+			}
+			return m, nil
+		}
+
+		if m.err != nil {
 			return m, tea.Quit
 		}
 		if key.Matches(msg, uiKeys.Quit) {
 			if msg.String() == "q" && m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText() {
 				// Let the dashboard text inputs handle the "q" keystroke
+			} else if m.state == stateProgress && !m.done {
+				m.showQuitConfirm = true
+				return m, nil
 			} else {
 				return m, tea.Quit
 			}
@@ -272,7 +287,24 @@ func (m *UI) View() string {
 	}
 
 	header := m.headerView()
-	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", baseView))
+	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", baseView))
+
+	if m.showQuitConfirm {
+		dialogBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("9")).
+			Padding(1, 2).
+			Render(lipgloss.JoinVertical(lipgloss.Center,
+				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("Quit Conversion?"),
+				"",
+				"Conversion is currently running.",
+				"Are you sure you want to quit? (y/N)",
+			))
+			
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
+	}
+
+	return fullView
 }
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
