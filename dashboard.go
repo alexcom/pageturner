@@ -130,6 +130,10 @@ type DashboardModel struct {
 	// UI state
 	focusIndex int
 	help       help.Model
+
+	// Window size
+	width  int
+	height int
 }
 
 const (
@@ -203,8 +207,13 @@ func (m *DashboardModel) updateViewport() {
 
 	for _, f := range m.files {
 		fname := f
-		if len([]rune(fname)) > 35 {
-			fname = string([]rune(fname)[:32]) + "..."
+		// truncate based on viewport width
+		maxLen := m.fileViewport.Width - 4
+		if maxLen < 10 {
+			maxLen = 10
+		}
+		if len([]rune(fname)) > maxLen {
+			fname = string([]rune(fname)[:maxLen-3]) + "..."
 		}
 		listLines = append(listLines, prefix+fname)
 	}
@@ -279,8 +288,6 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 		}
 	}
 	m.coverList.SetItems(coverItems)
-	
-	m.coverList.SetHeight(len(coverItems))
 }
 
 func hasCoverImage(ctx context.Context, dir, filename string) bool {
@@ -329,10 +336,75 @@ func (m *DashboardModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// Layout calculation constants
+const (
+	layoutDocHorizontalMargin     = 4  // 2 left + 2 right from docStyle
+	layoutPaneGap                 = 2  // gap between left and right panes
+	layoutMinPaneWidth            = 30
+	layoutVerticalNonPaneSpace    = 14 // header stack (7), margins (2), start btn (3), help (1-2)
+	layoutMinPaneHeight           = 15
+	layoutPaneBorderWidth         = 6  // borders (2) + horizontal padding (4)
+	layoutPaneBorderHeight        = 4  // borders (2) + vertical padding (2)
+	layoutMinContentWidth         = 10
+	layoutLeftPaneNonViewportHeight = 8  // borders (2) + padding (2) + titles/bitrate (4)
+	layoutMinComponentHeight      = 3
+	layoutRightPaneNonCoverHeight = 17 // borders (2) + padding (2) + metadata (9) + headers/toggles (4)
+	layoutInputLabelWidth         = 12 // reserved space for labels like "Artist:  "
+)
+
+func (m *DashboardModel) updateLayout(w, h int) {
+	m.width = w
+	m.height = h
+	m.help.Width = w
+
+	paneWidth := (w - layoutDocHorizontalMargin - layoutPaneGap) / 2
+	if paneWidth < layoutMinPaneWidth {
+		paneWidth = layoutMinPaneWidth
+	}
+
+	paneHeight := h - layoutVerticalNonPaneSpace
+	if paneHeight < layoutMinPaneHeight {
+		paneHeight = layoutMinPaneHeight
+	}
+
+	contentWidth := paneWidth - layoutPaneBorderWidth
+	if contentWidth < layoutMinContentWidth {
+		contentWidth = layoutMinContentWidth
+	}
+
+	m.fileViewport.Width = contentWidth
+	vpHeight := paneHeight - layoutLeftPaneNonViewportHeight
+	if vpHeight < layoutMinComponentHeight {
+		vpHeight = layoutMinComponentHeight
+	}
+	m.fileViewport.Height = vpHeight
+
+	m.coverList.SetWidth(contentWidth)
+
+	coverHeight := paneHeight - layoutRightPaneNonCoverHeight
+	if coverHeight < layoutMinComponentHeight {
+		coverHeight = layoutMinComponentHeight
+	}
+	m.coverList.SetHeight(coverHeight)
+
+	// Update text input widths
+	inputWidth := contentWidth - layoutInputLabelWidth
+	if inputWidth < layoutMinContentWidth {
+		inputWidth = layoutMinContentWidth
+	}
+	for i := range m.inputs {
+		if i == dashFileList {
+			continue
+		}
+		m.inputs[i].Width = inputWidth
+	}
+}
+
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.help.Width = msg.Width
+		m.updateLayout(msg.Width, msg.Height)
+		m.updateViewport() // Make sure viewport text gets re-truncated and wrapped
 	case tea.MouseMsg:
 		if m.focusIndex == dashFileList {
 			var cmd tea.Cmd
@@ -432,15 +504,33 @@ func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (m *DashboardModel) View() string {
+	paneWidth := (m.width - layoutDocHorizontalMargin - layoutPaneGap) / 2
+	if paneWidth < layoutMinPaneWidth {
+		paneWidth = layoutMinPaneWidth
+	}
+	paneHeight := m.height - layoutVerticalNonPaneSpace
+	if paneHeight < layoutMinPaneHeight {
+		paneHeight = layoutMinPaneHeight
+	}
+
+	// We apply Height to the border box to ensure they are exactly equal in height.
+	// We might need to adjust by subtracting border widths/padding, but Lipgloss Height() 
+	// typically includes padding/border when set on the outer style, or we can just 
+	// set the internal components to fixed heights and let the border wrap them. 
+	// Let's set the height on the border style.
 	activeBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor).
-		Padding(1, 2)
+		Padding(1, 2).
+		Width(paneWidth - layoutPaneBorderWidth).
+		Height(paneHeight - layoutPaneBorderHeight)
 
 	inactiveBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(secondaryColor).
-		Padding(1, 2)
+		Padding(1, 2).
+		Width(paneWidth - layoutPaneBorderWidth).
+		Height(paneHeight - layoutPaneBorderHeight)
 
 	// Left: Discovered files
 	var left []string
@@ -457,9 +547,9 @@ func (m *DashboardModel) View() string {
 
 	leftStr := lipgloss.JoinVertical(lipgloss.Left, left...)
 	if m.focusIndex == dashFileList {
-		leftStr = activeBorder.Width(45).Render(leftStr)
+		leftStr = activeBorder.Render(leftStr)
 	} else {
-		leftStr = inactiveBorder.Width(45).Render(leftStr)
+		leftStr = inactiveBorder.Render(leftStr)
 	}
 
 	// Right: Metadata
@@ -497,9 +587,9 @@ func (m *DashboardModel) View() string {
 
 	rightStr := lipgloss.JoinVertical(lipgloss.Left, right...)
 	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
-		rightStr = activeBorder.Width(45).Render(rightStr)
+		rightStr = activeBorder.Render(rightStr)
 	} else {
-		rightStr = inactiveBorder.Width(45).Render(rightStr)
+		rightStr = inactiveBorder.Render(rightStr)
 	}
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, lipgloss.NewStyle().Width(2).Render(""), rightStr)
