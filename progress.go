@@ -88,7 +88,7 @@ type ProgressModel struct {
 }
 
 func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
-	files := listFilesByExt(getWd(), ".mp3")
+	files := listFilesByExt(dir, ".mp3")
 	
 	prog := progress.New(progress.WithDefaultGradient())
 	vp := viewport.New(80, 20)

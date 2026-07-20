@@ -14,7 +14,7 @@ import (
 func runConversionPipeline(ctx context.Context, config ConversionConfig, updates chan tea.Msg) {
 	defer close(updates) // signal that the channel is closed if we exit
 
-	files := listFilesByExt(getWd(), ".mp3")
+	files := listFilesByExt(config.TargetDir, ".mp3")
 	if len(files) == 0 {
 		updates <- msgLog{text: "No MP3 files discovered in current directory."}
 		updates <- msgCancelled{}
@@ -46,14 +46,14 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgStepAdvance{step: 1}
 	updates <- msgLog{text: "Converting files..."}
-	if err := parallelConvert(ctx, convertDir, config.BitRate, updates); err != nil {
+	if err := parallelConvert(ctx, config.TargetDir, convertDir, config.BitRate, updates); err != nil {
 		updates <- msgError{err: err}
 		return
 	}
 
 	updates <- msgStepAdvance{step: 2}
 	updates <- msgLog{text: "Resolving cover art..."}
-	cover, tempCover, err := resolveCover(ctx, updates)
+	cover, tempCover, err := resolveCover(ctx, config.TargetDir, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -61,7 +61,7 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgStepAdvance{step: 3}
 	updates <- msgLog{text: "Generating metadata file..."}
-	outFilename, err := generateFFMETA(ctx, convertDir, config, updates)
+	outFilename, err := generateFFMETA(ctx, config.TargetDir, convertDir, config, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -77,14 +77,14 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgStepAdvance{step: 4}
 	updates <- msgLog{text: "Merging files with metadata..."}
-	if err := merge(ctx, convertDir, outFilename, cover, updates); err != nil {
+	if err := merge(ctx, config.TargetDir, convertDir, outFilename, cover, updates); err != nil {
 		updates <- msgError{err: err}
 		return
 	}
 
 	updates <- msgStepAdvance{step: 5}
 	updates <- msgLog{text: "Cleaning up..."}
-	err = cleanup(convertDir, tempCover, updates)
+	err = cleanup(config.TargetDir, convertDir, tempCover, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -105,7 +105,7 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 }
 
 func removeSourceFiles(config ConversionConfig, updates chan<- tea.Msg) {
-	wd := getWd()
+	wd := config.TargetDir
 	entries, err := os.ReadDir(wd)
 	if err != nil {
 		if updates != nil { updates <- msgLog{text: err.Error()} }
@@ -130,7 +130,7 @@ func removeSourceFiles(config ConversionConfig, updates chan<- tea.Msg) {
 	}
 }
 
-func cleanup(convertDir string, cover string, updates chan<- tea.Msg) error {
+func cleanup(targetDir string, convertDir string, cover string, updates chan<- tea.Msg) error {
 	files, err := os.ReadDir(convertDir)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func cleanup(convertDir string, cover string, updates chan<- tea.Msg) error {
 			}
 		}
 	}
-	if err = os.Remove(metadataFileName); err != nil {
+	if err = os.Remove(filepath.Join(targetDir, metadataFileName)); err != nil {
 		if updates != nil { updates <- msgLog{text: "WARN " + err.Error()} }
 	}
 	if cover != "" {

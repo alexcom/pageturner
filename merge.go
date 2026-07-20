@@ -24,17 +24,17 @@ const (
 )
 const fileListFileName = "filelist.txt"
 
-func merge(ctx context.Context, convertDir, filename, cover string, updates chan<- tea.Msg) (err error) {
-	listFileName, err := generateMergeFileList(convertDir)
+func merge(ctx context.Context, targetDir, convertDir, filename, cover string, updates chan<- tea.Msg) (err error) {
+	listFileName, err := generateMergeFileList(targetDir, convertDir)
 	if err != nil {
 		return
 	}
 	cleanupState.setMergeList(listFileName)
 	defer func() {
-		err := os.Remove(listFileName)
+		err := os.Remove(filepath.Join(targetDir, listFileName))
 		if err != nil {
 			if updates != nil {
-				updates <- msgLog{text: "WARN " + listFileName + " was not deleted"}
+				updates <- msgLog{text: "WARN " + filepath.Join(targetDir, listFileName) + " was not deleted"}
 			}
 		} else {
 			cleanupState.setMergeList("")
@@ -56,10 +56,10 @@ func merge(ctx context.Context, convertDir, filename, cover string, updates chan
 		dispositionV0, attachedPic,
 		filename,
 	}
-	return runScriptArgs(ctx, script[0], script[1:], nil)
+	return runScriptArgs(ctx, targetDir, script[0], script[1:], nil)
 }
 
-func generateMergeFileList(convertDir string) (filename string, err error) {
+func generateMergeFileList(targetDir, convertDir string) (filename string, err error) {
 	files := listFilesByExt(convertDir, ".m4a")
 	bb := bytes.Buffer{}
 	for _, file := range files {
@@ -68,7 +68,7 @@ func generateMergeFileList(convertDir string) (filename string, err error) {
 			return
 		}
 	}
-	if err = os.WriteFile(fileListFileName, bb.Bytes(), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(targetDir, fileListFileName), bb.Bytes(), 0644); err != nil {
 		return
 	}
 	return fileListFileName, nil

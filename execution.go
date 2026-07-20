@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func runScriptArgs(ctx context.Context, script string, args []string, env []string) (err error) {
+func runScriptArgs(ctx context.Context, dir string, script string, args []string, env []string) (err error) {
 	command := exec.CommandContext(ctx, script, args...)
 	command.Env = os.Environ()
 	for _, e := range env {
@@ -19,22 +19,17 @@ func runScriptArgs(ctx context.Context, script string, args []string, env []stri
 	bb := bytes.Buffer{}
 	command.Stdout = &bb
 	command.Stderr = &bb
-	wd, _ := os.Getwd()
-	command.Dir = wd
+	command.Dir = dir
 	err = command.Run()
 	if err != nil {
-		writeOutputToFile(bb)
+		writeOutputToFile(dir, bb)
 		return err
 	}
 	return nil
 }
 
-func writeOutputToFile(bb bytes.Buffer) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	filename := filepath.Join(wd, fmt.Sprintf("fail-%s.log", time.Now().Format("2006-01-02_15_04_05")))
+func writeOutputToFile(dir string, bb bytes.Buffer) {
+	filename := filepath.Join(dir, fmt.Sprintf("fail-%s.log", time.Now().Format("2006-01-02_15_04_05")))
 	file, err := os.OpenFile(filename, newFileMode, 0644)
 	if err != nil {
 		return

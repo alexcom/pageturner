@@ -28,8 +28,8 @@ const (
 	outputFmt  = "%s.m4a"
 )
 
-func parallelConvert(ctx context.Context, convertDir string, aBitrate int, updates chan<- tea.Msg) error {
-	files := listFilesByExt(getWd(), ".mp3")
+func parallelConvert(ctx context.Context, targetDir, convertDir string, aBitrate int, updates chan<- tea.Msg) error {
+	files := listFilesByExt(targetDir, ".mp3")
 	if len(files) == 0 {
 		return errors.New("no MP3 files discovered in current directory")
 	}
@@ -57,7 +57,7 @@ func parallelConvert(ctx context.Context, convertDir string, aBitrate int, updat
 				if updates != nil {
 					updates <- msgWorkerUpdate{workerID: workerID, status: "Converting " + filename}
 				}
-				err := runScriptArgs(ctx, ffmpeg, makeArgs(convertDir, filename, aBitrate), nil)
+				err := runScriptArgs(ctx, targetDir, ffmpeg, makeArgs(targetDir, convertDir, filename, aBitrate), nil)
 				if err != nil {
 					errCh <- err
 				} else {
@@ -90,7 +90,7 @@ func parallelConvert(ctx context.Context, convertDir string, aBitrate int, updat
 	return errors.Join(errs...)
 }
 
-func makeArgs(convertDir, filename string, aBitRate int) []string {
+func makeArgs(targetDir, convertDir, filename string, aBitRate int) []string {
 	targetPath := filepath.Join(convertDir, fmt.Sprintf(outputFmt, strings.TrimSuffix(filename, filepath.Ext(filename))))
 	return []string{
 		confirm,

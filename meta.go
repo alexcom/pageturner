@@ -114,7 +114,7 @@ func readMetadataFromFilesWithExtension(ctx context.Context, dir, ext string) (_
 	return outCh, nil
 }
 
-func generateFFMETA(ctx context.Context, convertDir string, config ConversionConfig, updates chan<- tea.Msg) (filename string, err error) {
+func generateFFMETA(ctx context.Context, targetDir, convertDir string, config ConversionConfig, updates chan<- tea.Msg) (filename string, err error) {
 	fileBytesChan, err := readMetadataFromFilesWithExtension(ctx, convertDir, ".m4a")
 	if err != nil {
 		return
@@ -157,7 +157,7 @@ func generateFFMETA(ctx context.Context, convertDir string, config ConversionCon
 		CommonMeta: tagBag.Format.Tags,
 	}
 	tt := template.Must(template.New("ffmetadata").Parse(ffmetadataTemplate))
-	file, err := os.OpenFile(metadataFileName, newFileMode, 0644)
+	file, err := os.OpenFile(filepath.Join(targetDir, metadataFileName), newFileMode, 0644)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +166,7 @@ func generateFFMETA(ctx context.Context, convertDir string, config ConversionCon
 	if err != nil {
 		return "", err
 	}
-	return outName(tagBag.Format.Tags, updates), nil
+	return outName(targetDir, tagBag.Format.Tags, updates), nil
 }
 
 func setPredefinedTags(t *tagsContainer) {
@@ -176,7 +176,7 @@ func setPredefinedTags(t *tagsContainer) {
 	}
 }
 
-func outName(tags map[string]string, updates chan<- tea.Msg) string {
+func outName(targetDir string, tags map[string]string, updates chan<- tea.Msg) string {
 	var result string
 	if artist, ok := tags["artist"]; ok {
 		if album, ok := tags["album"]; ok {
@@ -184,15 +184,7 @@ func outName(tags map[string]string, updates chan<- tea.Msg) string {
 		}
 	}
 	if result == "" {
-		wd, err := os.Getwd()
-		if err == nil {
-			result = filepath.Base(wd) + ".m4b"
-		} else {
-			if updates != nil {
-				updates <- msgLog{text: err.Error()}
-			}
-			result = "book.m4b"
-		}
+		result = filepath.Base(targetDir) + ".m4b"
 	}
 	return strings.ReplaceAll(result, string(filepath.Separator), "_")
 }

@@ -20,22 +20,22 @@ const (
 	noAudio      = "-an"
 )
 
-func resolveCover(ctx context.Context, updates chan<- tea.Msg) (coverPath string, tempCoverPath string, err error) {
-	if name, err := findCover(updates); err == nil && name != "" {
+func resolveCover(ctx context.Context, targetDir string, updates chan<- tea.Msg) (coverPath string, tempCoverPath string, err error) {
+	if name, err := findCover(targetDir, updates); err == nil && name != "" {
 		return name, "", nil
 	} else if err != nil {
 		if updates != nil {
 			updates <- msgLog{text: "failed to find cover because: " + err.Error()}
 		}
 	}
-	if name := extractCover(ctx, updates); name != "" {
+	if name := extractCover(ctx, targetDir, updates); name != "" {
 		cleanupState.setCover(name)
 		return name, name, nil
 	}
 	if len(defaultCoverBytes) == 0 {
 		return "", "", errors.New("embedded default cover not found")
 	}
-	err = os.WriteFile(defaultCover, defaultCoverBytes, 0644)
+	err = os.WriteFile(filepath.Join(targetDir, defaultCover), defaultCoverBytes, 0644)
 	if err != nil {
 		return "", "", err
 	}
@@ -45,8 +45,8 @@ func resolveCover(ctx context.Context, updates chan<- tea.Msg) (coverPath string
 
 const extractedCoverName = "cover.jpg"
 
-func extractCover(ctx context.Context, updates chan<- tea.Msg) string {
-	mp3s := listFilesByExt(getWd(), ".mp3")
+func extractCover(ctx context.Context, targetDir string, updates chan<- tea.Msg) string {
+	mp3s := listFilesByExt(targetDir, ".mp3")
 	if len(mp3s) == 0 {
 		if updates != nil {
 			updates <- msgLog{text: "WARN no mp3 files to extract cover from"}
@@ -54,7 +54,7 @@ func extractCover(ctx context.Context, updates chan<- tea.Msg) string {
 		return ""
 	}
 	script := []string{ffmpeg, confirm, input, mp3s[0], noAudio, extractedCoverName}
-	err := runScriptArgs(ctx, script[0], script[1:], nil)
+	err := runScriptArgs(ctx, targetDir, script[0], script[1:], nil)
 	if err != nil {
 		if updates != nil {
 			updates <- msgLog{text: "cover extraction failed with error: " + err.Error()}
@@ -67,12 +67,8 @@ func extractCover(ctx context.Context, updates chan<- tea.Msg) string {
 
 const maxImageSize = 300 * 1024
 
-func findCover(updates chan<- tea.Msg) (filename string, err error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	candidates, err := os.ReadDir(dir)
+func findCover(targetDir string, updates chan<- tea.Msg) (filename string, err error) {
+	candidates, err := os.ReadDir(targetDir)
 	foundImages := make([]os.DirEntry, 0)
 	for _, candidate := range candidates {
 		if candidate.IsDir() {
@@ -85,7 +81,7 @@ func findCover(updates chan<- tea.Msg) (filename string, err error) {
 			if !matchesTypicalCoverName(justName) {
 				continue
 			}
-			if _, err := os.Stat(candidate.Name()); os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(targetDir, candidate.Name())); os.IsNotExist(err) {
 				if updates != nil {
 					updates <- msgLog{text: "holly hell! The file suddenly disappeared! Filename: " + candidate.Name()}
 				}
