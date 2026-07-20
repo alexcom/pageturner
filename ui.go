@@ -109,6 +109,9 @@ type msgError struct {
 	err error
 }
 
+type msgCancelled struct{}
+
+
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -148,6 +151,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.err != nil {
 			return m, tea.Quit
 		}
+		
+		if msg.String() == "esc" && m.state == stateProgress && m.done {
+			return m, func() tea.Msg { return msgSwitchToFileManager{} }
+		}
+
 		if key.Matches(msg, uiKeys.Quit) {
 			if msg.String() == "q" && m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText() {
 				// Let the dashboard text inputs handle the "q" keystroke
@@ -185,6 +193,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgStartConversion:
 		m.state = stateProgress
+		m.done = false
 		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
 		if m.width != 0 && m.height != 0 {
 			m.progress.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
@@ -193,7 +202,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgConversionDone:
 		m.done = true
-		return m, nil
+
+	case msgCancelled:
+		m.done = true
 	}
 
 	// Dispatch to active sub-model

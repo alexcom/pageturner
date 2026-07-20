@@ -16,6 +16,7 @@ import (
 var progKeys = struct {
 	ToggleLogs key.Binding
 	Quit       key.Binding
+	Back       key.Binding
 }{
 	ToggleLogs: key.NewBinding(
 		key.WithKeys("l", "L"),
@@ -25,12 +26,16 @@ var progKeys = struct {
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
 	),
+	Back: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "back"),
+	),
 }
 
 type progressKeyMap struct{}
 
 func (k progressKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{progKeys.ToggleLogs, progKeys.Quit}
+	return []key.Binding{progKeys.ToggleLogs, progKeys.Back, progKeys.Quit}
 }
 func (k progressKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
@@ -73,6 +78,7 @@ type ProgressModel struct {
 
 	logs         []string
 	showFullLogs bool
+	cancelled    bool
 
 	updates chan tea.Msg
 
@@ -201,10 +207,13 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForUpdate(m.updates)
 
 	case msgError:
-		return m, func() tea.Msg { return msg }
+		return m, nil
 	case msgConversionDone:
 		m.currentStep = 6
-		return m, func() tea.Msg { return msg }
+		return m, nil
+	case msgCancelled:
+		m.cancelled = true
+		return m, nil
 	}
 	
 	if m.showFullLogs {
@@ -221,7 +230,9 @@ func (m *ProgressModel) View() string {
 	}
 
 	statusText := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Working...")
-	if m.currentStep >= 6 {
+	if m.cancelled {
+		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Cancelled")
+	} else if m.currentStep >= 6 {
 		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("Complete")
 	}
 
@@ -269,7 +280,9 @@ func (m *ProgressModel) View() string {
 	
 	for i, s := range steps {
 		status := "[ ]"
-		if i < m.currentStep {
+		if m.cancelled && i == m.currentStep {
+			status = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("[✗]")
+		} else if i < m.currentStep {
 			status = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("[✔]")
 		} else if i == m.currentStep {
 			status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("[❯]")

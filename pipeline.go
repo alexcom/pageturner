@@ -14,6 +14,13 @@ import (
 func runConversionPipeline(ctx context.Context, config ConversionConfig, updates chan tea.Msg) {
 	defer close(updates) // signal that the channel is closed if we exit
 
+	files := listFilesByExt(getWd(), ".mp3")
+	if len(files) == 0 {
+		updates <- msgLog{text: "No MP3 files discovered in current directory."}
+		updates <- msgCancelled{}
+		return
+	}
+
 	updates <- msgLog{text: "Checking prerequisites..."}
 	updates <- msgStepAdvance{step: 0}
 	if err := checkPrerequisites(); err != nil {
