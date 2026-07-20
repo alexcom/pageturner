@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type item struct {
@@ -69,12 +68,7 @@ func newFileManagerModel(dir string) *FileManagerModel {
 	m.list = list.New([]list.Item{}, delegate, 80, 25)
 	m.list.SetShowStatusBar(false)
 	m.list.SetFilteringEnabled(true)
-	
-	// Customize the list's built-in title to look like a standard folder header
-	m.list.Styles.Title = lipgloss.NewStyle().
-		Background(lipgloss.Color("6")). // Cyan
-		Foreground(lipgloss.Color("0")). // Black text
-		Padding(0, 1)
+	m.list.SetShowTitle(false)
 
 	m.list.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{fmKeys.Open, fmKeys.Back}
@@ -90,8 +84,7 @@ func (m *FileManagerModel) loadDir(dir string) {
 	entries, err := os.ReadDir(m.dir)
 	var items []list.Item
 
-	// Update list title to show current directory
-	m.list.Title = m.dir
+	// List title is managed by the main UI
 
 	// Always add parent
 	items = append(items, item{name: "..", isDir: true})
@@ -127,8 +120,8 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
-		// Account for the main global title above the list
-		titleHeight := 4 // Bordered box is 3 lines tall, plus 1 line spacing
+		// Account for the main global title and directory view above the list
+		titleHeight := 6 // Bordered box is 3 lines tall, plus dirView (1) and 2 spaces
 		m.list.SetSize(msg.Width-h, msg.Height-v-titleHeight)
 		// We still pass WindowSizeMsg down so the list updates itself.
 	case tea.KeyMsg:

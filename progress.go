@@ -138,7 +138,7 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.progress.Width = 80
 		}
 		
-		titleHeight := 4 // 3 for header box + 1 for spacing
+		titleHeight := 6 // 3 for header box + 1 for dirView + 2 spacing
 		m.viewport.Width = msg.Width - h - 2
 		m.viewport.Height = msg.Height - v - titleHeight - 4
 		m.help.Width = msg.Width

@@ -1,6 +1,5 @@
 package main
 
-
 import (
 	"context"
 
@@ -30,13 +29,14 @@ const (
 type UI struct {
 	ctx         context.Context
 	state       state
+	dir         string
 	fileManager *FileManagerModel
 	dashboard   *DashboardModel
 	progress    *ProgressModel
 
 	// Error handling
 	err error
-	
+
 	// Completion state
 	done bool
 
@@ -50,6 +50,7 @@ func newUI(ctx context.Context, initialState state, initialDir string) *UI {
 	m := &UI{
 		ctx:   ctx,
 		state: initialState,
+		dir:   initialDir,
 	}
 
 	// Initialize submodels
@@ -111,7 +112,6 @@ type msgError struct {
 
 type msgCancelled struct{}
 
-
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -119,7 +119,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		
+
 		if m.fileManager != nil {
 			newModel, cmd := m.fileManager.Update(msg)
 			m.fileManager = newModel.(*FileManagerModel)
@@ -151,7 +151,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.err != nil {
 			return m, tea.Quit
 		}
-		
+
 		if msg.String() == "esc" && m.state == stateProgress && m.done {
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		}
@@ -175,6 +175,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
+		m.dir = msg.dir
 		m.dashboard = newDashboardModel(m.ctx, msg.dir)
 		if m.width != 0 && m.height != 0 {
 			m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
@@ -193,6 +194,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgStartConversion:
 		m.state = stateProgress
+		m.dir = msg.config.TargetDir
 		m.done = false
 		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
 		if m.width != 0 && m.height != 0 {
@@ -213,6 +215,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fileManager != nil {
 			newModel, newCmd := m.fileManager.Update(msg)
 			m.fileManager = newModel.(*FileManagerModel)
+			m.dir = m.fileManager.dir
 			cmds = append(cmds, newCmd)
 		}
 	case stateDashboard:
@@ -293,7 +296,7 @@ func (m *UI) View() string {
 				"",
 				helpStyle.Render("Press any key to exit"),
 			))
-		
+
 		baseView = baseView + "\n\n" + errorBox
 	}
 
@@ -302,7 +305,15 @@ func (m *UI) View() string {
 	}
 
 	header := m.headerView()
-	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", baseView))
+
+	dirView := lipgloss.NewStyle().
+		Background(lipgloss.Color("6")). // Cyan
+		Foreground(lipgloss.Color("0")). // Black text
+		Padding(0, 1).
+		MarginLeft(1).
+		Render(m.dir)
+
+	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", dirView, "", baseView))
 
 	if m.showQuitConfirm {
 		dialogBox := lipgloss.NewStyle().
@@ -315,7 +326,7 @@ func (m *UI) View() string {
 				"Conversion is currently running.",
 				"Are you sure you want to quit? (y/N)",
 			))
-			
+
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
 	}
 
