@@ -43,9 +43,9 @@ func (d coverDelegate) Render(w io.Writer, l list.Model, index int, item list.It
 
 	if d.m.focusIndex == dashCoverSelection {
 		if index == l.Index() {
-			str = lipgloss.NewStyle().Foreground(primaryColor).Render(strings.Replace(str, "  (•)", "> (•)", 1))
+			str = lipgloss.NewStyle().Foreground(primaryColor).Render(str)
 		} else {
-			str = lipgloss.NewStyle().Foreground(subtextColor).Render(strings.Replace(str, "  ( )", "> ( )", 1))
+			str = lipgloss.NewStyle().Foreground(subtextColor).Render(str)
 		}
 	} else {
 		if index == l.Index() {
@@ -382,6 +382,9 @@ func (m *DashboardModel) updateLayout(w, h int) {
 	m.coverList.SetWidth(contentWidth)
 
 	coverHeight := paneHeight - layoutRightPaneNonCoverHeight
+	if coverHeight > 3 {
+		coverHeight = 3
+	}
 	if coverHeight < layoutMinComponentHeight {
 		coverHeight = layoutMinComponentHeight
 	}
