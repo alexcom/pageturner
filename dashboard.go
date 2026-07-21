@@ -137,20 +137,20 @@ type DashboardModel struct {
 }
 
 const (
-	dashFileList = iota
-	dashInputArtist
+	dashInputArtist = iota
 	dashInputAlbum
 	dashInputTitle
 	dashInputOutFilename
 	dashCoverSelection
 	dashRemoveSourceToggle
+	dashFileList
 	dashStartButton
 )
 
 func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m := &DashboardModel{
 		dir:    dir,
-		inputs: make([]textinput.Model, 5),
+		inputs: make([]textinput.Model, 4),
 		help:   help.New(),
 	}
 	m.help.Styles.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
@@ -167,10 +167,6 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m.coverList.SetShowPagination(false)
 
 	for i := range m.inputs {
-		if i == dashFileList {
-			continue
-		}
-
 		t := textinput.New()
 		t.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 		t.CharLimit = 128
@@ -397,9 +393,6 @@ func (m *DashboardModel) updateLayout(w, h int) {
 		inputWidth = layoutMinContentWidth
 	}
 	for i := range m.inputs {
-		if i == dashFileList {
-			continue
-		}
 		m.inputs[i].Width = inputWidth
 	}
 }
@@ -495,9 +488,6 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	for i := range m.inputs {
-		if i == dashFileList {
-			continue
-		}
 		if m.focusIndex == i {
 			var cmd tea.Cmd
 			m.inputs[i], cmd = m.inputs[i].Update(msg)
@@ -544,7 +534,7 @@ func (m *DashboardModel) View() string {
 		if m.focusIndex == i {
 			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
 		}
-		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
+		label := []string{"Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
 
 		inputView := m.inputs[i].View()
 		left = append(left, prefix+label+inputView)
