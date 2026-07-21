@@ -188,6 +188,7 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 		m.inputs[i] = t
 	}
 
+	m.focusIndex = dashInputArtist
 	m.inputs[dashInputArtist].Focus()
 	m.scanDirectory(ctx)
 	return m
@@ -346,7 +347,7 @@ const (
 	layoutPaneBorderWidth         = 6  // borders (2) + horizontal padding (4)
 	layoutPaneBorderHeight        = 4  // borders (2) + vertical padding (2)
 	layoutMinContentWidth         = 10
-	layoutLeftPaneNonViewportHeight = 8  // borders (2) + padding (2) + titles/bitrate (4)
+	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
 	layoutMinComponentHeight      = 3
 	layoutRightPaneNonCoverHeight = 17 // borders (2) + padding (2) + metadata (9) + headers/toggles (4)
 	layoutInputLabelWidth         = 12 // reserved space for labels like "Artist:  "
@@ -535,45 +536,25 @@ func (m *DashboardModel) View() string {
 		Width(paneWidth - layoutPaneBorderWidth).
 		Height(paneHeight - layoutPaneBorderHeight)
 
-	// Left: Discovered files
+	// Left: Metadata & Configuration
 	var left []string
-	left = append(left, lipgloss.NewStyle().Bold(true).Render("DISCOVERED MP3 FILES"), "")
-
-	listBlock := m.fileViewport.View()
-	left = append(left, listBlock, "")
-
-	bitrateStr := "Detected Bitrate: Unknown"
-	if m.bitrate > 0 {
-		bitrateStr = fmt.Sprintf("Detected Bitrate: %d kbps", m.bitrate)
-	}
-	left = append(left, bitrateStr)
-
-	leftStr := lipgloss.JoinVertical(lipgloss.Left, left...)
-	if m.focusIndex == dashFileList {
-		leftStr = activeBorder.Render(leftStr)
-	} else {
-		leftStr = inactiveBorder.Render(leftStr)
-	}
-
-	// Right: Metadata
-	var right []string
-	right = append(right, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION"), "")
+	left = append(left, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION"), "")
 	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
 		prefix := "  "
 		if m.focusIndex == i {
 			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
 		}
 		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
-		
+
 		inputView := m.inputs[i].View()
-		right = append(right, prefix+label+inputView)
+		left = append(left, prefix+label+inputView)
 	}
 
-	right = append(right, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
+	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
 
-	right = append(right, m.coverList.View())
+	left = append(left, m.coverList.View())
 
-	right = append(right, "", lipgloss.NewStyle().Bold(true).Render("SOURCE MP3 FILES"), "")
+	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("SOURCE MP3 FILES"), "")
 
 	prefix := "  "
 	if m.focusIndex == dashRemoveSourceToggle {
@@ -583,10 +564,30 @@ func (m *DashboardModel) View() string {
 	if m.removeSource {
 		box = "[x]"
 	}
-	right = append(right, prefix+box+" Remove")
+	left = append(left, prefix+box+" Remove")
+
+	leftStr := lipgloss.JoinVertical(lipgloss.Left, left...)
+	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
+		leftStr = activeBorder.Render(leftStr)
+	} else {
+		leftStr = inactiveBorder.Render(leftStr)
+	}
+
+	// Right: Discovered files
+	var right []string
+	right = append(right, lipgloss.NewStyle().Bold(true).Render("DISCOVERED MP3 FILES"), "")
+
+	listBlock := m.fileViewport.View()
+	right = append(right, listBlock, "")
+
+	bitrateStr := "Detected Bitrate: Unknown"
+	if m.bitrate > 0 {
+		bitrateStr = fmt.Sprintf("Detected Bitrate: %d kbps", m.bitrate)
+	}
+	right = append(right, bitrateStr)
 
 	rightStr := lipgloss.JoinVertical(lipgloss.Left, right...)
-	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
+	if m.focusIndex == dashFileList {
 		rightStr = activeBorder.Render(rightStr)
 	} else {
 		rightStr = inactiveBorder.Render(rightStr)
