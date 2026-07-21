@@ -310,7 +310,6 @@ func (m *UI) View() string {
 		Background(lipgloss.Color("6")). // Cyan
 		Foreground(lipgloss.Color("0")). // Black text
 		Padding(0, 1).
-		MarginLeft(1).
 		Render(m.dir)
 
 	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", dirView, "", baseView))
@@ -333,7 +332,7 @@ func (m *UI) View() string {
 	return fullView
 }
 
-var docStyle = lipgloss.NewStyle().Margin(1, 2)
+var docStyle = lipgloss.NewStyle().Margin(1, 2, 0, 2)
 
 var (
 	primaryColor   = lipgloss.Color("#00ADB5")
