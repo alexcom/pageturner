@@ -24,7 +24,9 @@ type simpleItem string
 func (i simpleItem) Title() string       { return string(i) }
 func (i simpleItem) Description() string { return "" }
 func (i simpleItem) FilterValue() string { return string(i) }
+
 type coverDelegate struct{ m *DashboardModel }
+
 func (d coverDelegate) Height() int                             { return 1 }
 func (d coverDelegate) Spacing() int                            { return 0 }
 func (d coverDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
@@ -63,8 +65,6 @@ var dashKeys = struct {
 	NavDown     key.Binding
 	Confirm     key.Binding
 	Toggle      key.Binding
-	Left        key.Binding
-	Right       key.Binding
 	SwitchCover key.Binding
 }{
 	Quit: key.NewBinding(
@@ -87,14 +87,6 @@ var dashKeys = struct {
 		key.WithKeys(" "),
 		key.WithHelp("space", "toggle"),
 	),
-	Left: key.NewBinding(
-		key.WithKeys("left"),
-		key.WithHelp("←", "left"),
-	),
-	Right: key.NewBinding(
-		key.WithKeys("right"),
-		key.WithHelp("→", "right"),
-	),
 	SwitchCover: key.NewBinding(
 		key.WithKeys("c", "C"),
 		key.WithHelp("c", "cover"),
@@ -104,7 +96,7 @@ var dashKeys = struct {
 type dashboardKeyMap struct{}
 
 func (k dashboardKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Left, dashKeys.Right, dashKeys.Quit}
+	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Quit}
 }
 func (k dashboardKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
@@ -335,18 +327,18 @@ func (m *DashboardModel) Init() tea.Cmd {
 
 // Layout calculation constants
 const (
-	layoutDocHorizontalMargin     = 4  // 2 left + 2 right from docStyle
-	layoutPaneGap                 = 2  // gap between left and right panes
-	layoutMinPaneWidth            = 30
-	layoutVerticalNonPaneSpace    = 14 // header stack (7), margins (2), start btn (3), help (1-2)
-	layoutMinPaneHeight           = 15
-	layoutPaneBorderWidth         = 6  // borders (2) + horizontal padding (4)
-	layoutPaneBorderHeight        = 4  // borders (2) + vertical padding (2)
-	layoutMinContentWidth         = 10
+	layoutDocHorizontalMargin       = 4 // 2 left + 2 right from docStyle
+	layoutPaneGap                   = 2 // gap between left and right panes
+	layoutMinPaneWidth              = 30
+	layoutVerticalNonPaneSpace      = 14 // header stack (7), margins (2), start btn (3), help (1-2)
+	layoutMinPaneHeight             = 15
+	layoutPaneBorderWidth           = 6 // borders (2) + horizontal padding (4)
+	layoutPaneBorderHeight          = 4 // borders (2) + vertical padding (2)
+	layoutMinContentWidth           = 10
 	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
-	layoutMinComponentHeight      = 3
-	layoutRightPaneNonCoverHeight = 17 // borders (2) + padding (2) + metadata (9) + headers/toggles (4)
-	layoutInputLabelWidth         = 12 // reserved space for labels like "Artist:  "
+	layoutMinComponentHeight        = 3
+	layoutRightPaneNonCoverHeight   = 17 // borders (2) + padding (2) + metadata (9) + headers/toggles (4)
+	layoutInputLabelWidth           = 12 // reserved space for labels like "Artist:  "
 )
 
 func (m *DashboardModel) updateLayout(w, h int) {
@@ -441,7 +433,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.focusIndex < 0 {
 				m.focusIndex = dashStartButton
 			}
-			
+
 			m.updateViewport()
 
 			cmds := make([]tea.Cmd, len(m.inputs))
@@ -458,16 +450,6 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if key.Matches(msg, dashKeys.Toggle) {
 			if m.focusIndex == dashRemoveSourceToggle {
 				m.removeSource = !m.removeSource
-			}
-		} else if key.Matches(msg, dashKeys.Left, dashKeys.Right) {
-			if m.focusIndex == dashCoverSelection {
-				var cmd tea.Cmd
-				if key.Matches(msg, dashKeys.Left) {
-					m.coverList, cmd = m.coverList.Update(tea.KeyMsg{Type: tea.KeyUp})
-				} else {
-					m.coverList, cmd = m.coverList.Update(tea.KeyMsg{Type: tea.KeyDown})
-				}
-				return m, cmd
 			}
 		} else if key.Matches(msg, dashKeys.SwitchCover) {
 			if !(m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename) {
@@ -508,9 +490,9 @@ func (m *DashboardModel) View() string {
 	}
 
 	// We apply Height to the border box to ensure they are exactly equal in height.
-	// We might need to adjust by subtracting border widths/padding, but Lipgloss Height() 
-	// typically includes padding/border when set on the outer style, or we can just 
-	// set the internal components to fixed heights and let the border wrap them. 
+	// We might need to adjust by subtracting border widths/padding, but Lipgloss Height()
+	// typically includes padding/border when set on the outer style, or we can just
+	// set the internal components to fixed heights and let the border wrap them.
 	// Let's set the height on the border style.
 	activeBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
