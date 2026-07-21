@@ -160,6 +160,7 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 
 	for i := range m.inputs {
 		t := textinput.New()
+		t.Prompt = ""
 		t.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 		t.CharLimit = 128
 
@@ -178,6 +179,7 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 
 	m.focusIndex = dashInputArtist
 	m.inputs[dashInputArtist].Focus()
+	m.updateLayout(80, 24)
 	m.scanDirectory(ctx)
 	return m
 }
@@ -337,8 +339,9 @@ const (
 	layoutMinContentWidth           = 10
 	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
 	layoutMinComponentHeight        = 3
-	layoutRightPaneNonCoverHeight   = 17 // borders (2) + padding (2) + metadata (9) + headers/toggles (4)
-	layoutInputLabelWidth           = 12 // reserved space for labels like "Artist:  "
+	layoutRightPaneNonCoverHeight   = 19 // borders (2) + padding (2) + metadata/output (11) + headers/toggles (4)
+	layoutMetaPrefixLabelWidth      = 12 // prefix (2) + label (9) + textinput cursor margin (1)
+	layoutOutPrefixWidth            = 3  // prefix (2) + textinput cursor margin (1)
 )
 
 func (m *DashboardModel) updateLayout(w, h int) {
@@ -379,14 +382,22 @@ func (m *DashboardModel) updateLayout(w, h int) {
 	}
 	m.coverList.SetHeight(coverHeight)
 
-	// Update text input widths
-	inputWidth := contentWidth - layoutInputLabelWidth
-	if inputWidth < layoutMinContentWidth {
-		inputWidth = layoutMinContentWidth
+	// Update text input widths so text scrolls horizontally without wrapping lines inside the border pane.
+	wArtistAlbumTitle := contentWidth - layoutMetaPrefixLabelWidth
+	if wArtistAlbumTitle < 1 {
+		wArtistAlbumTitle = 1
 	}
-	for i := range m.inputs {
-		m.inputs[i].Width = inputWidth
+	for _, idx := range []int{dashInputArtist, dashInputAlbum, dashInputTitle} {
+		m.inputs[idx].Width = wArtistAlbumTitle
+		m.inputs[idx].SetCursor(m.inputs[idx].Position())
 	}
+
+	wOutFilename := contentWidth - layoutOutPrefixWidth
+	if wOutFilename < 1 {
+		wOutFilename = 1
+	}
+	m.inputs[dashInputOutFilename].Width = wOutFilename
+	m.inputs[dashInputOutFilename].SetCursor(m.inputs[dashInputOutFilename].Position())
 }
 
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -489,38 +500,44 @@ func (m *DashboardModel) View() string {
 		paneHeight = layoutMinPaneHeight
 	}
 
-	// We apply Height to the border box to ensure they are exactly equal in height.
-	// We might need to adjust by subtracting border widths/padding, but Lipgloss Height()
-	// typically includes padding/border when set on the outer style, or we can just
-	// set the internal components to fixed heights and let the border wrap them.
-	// Let's set the height on the border style.
+	contentWidth := paneWidth - layoutPaneBorderWidth
+	if contentWidth < layoutMinContentWidth {
+		contentWidth = layoutMinContentWidth
+	}
+	lineStyle := lipgloss.NewStyle().Width(contentWidth).MaxHeight(1)
+
 	activeBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor).
 		Padding(1, 2).
-		Width(paneWidth - layoutPaneBorderWidth).
 		Height(paneHeight - layoutPaneBorderHeight)
 
 	inactiveBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(secondaryColor).
 		Padding(1, 2).
-		Width(paneWidth - layoutPaneBorderWidth).
 		Height(paneHeight - layoutPaneBorderHeight)
 
-	// Left: Metadata & Configuration
+	// Left: Metadata & Output M4B File
 	var left []string
-	left = append(left, lipgloss.NewStyle().Bold(true).Render("METADATA & CONFIGURATION"), "")
-	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
+	left = append(left, lipgloss.NewStyle().Bold(true).Render("METADATA"), "")
+	for i := dashInputArtist; i <= dashInputTitle; i++ {
 		prefix := "  "
 		if m.focusIndex == i {
 			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
 		}
-		label := []string{"Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
+		label := []string{"Artist:  ", "Album:   ", "Title:   "}[i]
 
 		inputView := m.inputs[i].View()
 		left = append(left, prefix+label+inputView)
 	}
+
+	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("OUTPUT M4B FILE"), "")
+	prefixOut := "  "
+	if m.focusIndex == dashInputOutFilename {
+		prefixOut = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+	}
+	left = append(left, prefixOut+m.inputs[dashInputOutFilename].View())
 
 	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
 
@@ -538,7 +555,11 @@ func (m *DashboardModel) View() string {
 	}
 	left = append(left, prefix+box+" Remove")
 
-	leftStr := lipgloss.JoinVertical(lipgloss.Left, left...)
+	var formattedLeft []string
+	for _, l := range left {
+		formattedLeft = append(formattedLeft, lineStyle.Render(l))
+	}
+	leftStr := lipgloss.JoinVertical(lipgloss.Left, formattedLeft...)
 	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
 		leftStr = activeBorder.Render(leftStr)
 	} else {
@@ -558,7 +579,11 @@ func (m *DashboardModel) View() string {
 	}
 	right = append(right, bitrateStr)
 
-	rightStr := lipgloss.JoinVertical(lipgloss.Left, right...)
+	var formattedRight []string
+	for _, l := range right {
+		formattedRight = append(formattedRight, lineStyle.Render(l))
+	}
+	rightStr := lipgloss.JoinVertical(lipgloss.Left, formattedRight...)
 	if m.focusIndex == dashFileList {
 		rightStr = activeBorder.Render(rightStr)
 	} else {
