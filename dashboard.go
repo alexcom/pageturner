@@ -276,6 +276,11 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 		}
 	}
 	m.coverList.SetItems(coverItems)
+	coverHeight := len(coverItems)
+	if coverHeight < 1 {
+		coverHeight = 1
+	}
+	m.coverList.SetHeight(coverHeight)
 }
 
 func hasCoverImage(ctx context.Context, dir, filename string) bool {
@@ -336,7 +341,6 @@ const (
 	layoutMinContentWidth           = 10
 	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
 	layoutMinComponentHeight        = 3
-	layoutRightPaneNonCoverHeight   = 19 // borders (2) + padding (2) + metadata/output (11) + headers/toggles (4)
 	layoutMetaPrefixLabelWidth      = 12 // prefix (2) + label (9) + textinput cursor margin (1)
 	layoutOutPrefixWidth            = 3  // prefix (2) + textinput cursor margin (1)
 )
@@ -370,12 +374,9 @@ func (m *DashboardModel) updateLayout(w, h int) {
 
 	m.coverList.SetWidth(contentWidth)
 
-	coverHeight := paneHeight - layoutRightPaneNonCoverHeight
-	if coverHeight > 3 {
-		coverHeight = 3
-	}
-	if coverHeight < layoutMinComponentHeight {
-		coverHeight = layoutMinComponentHeight
+	coverHeight := len(m.coverList.Items())
+	if coverHeight < 1 {
+		coverHeight = 1
 	}
 	m.coverList.SetHeight(coverHeight)
 
@@ -554,7 +555,9 @@ func (m *DashboardModel) View() string {
 
 	var formattedLeft []string
 	for _, l := range left {
-		formattedLeft = append(formattedLeft, lineStyle.Render(l))
+		for _, line := range strings.Split(l, "\n") {
+			formattedLeft = append(formattedLeft, lineStyle.Render(line))
+		}
 	}
 	leftStr := lipgloss.JoinVertical(lipgloss.Left, formattedLeft...)
 	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
