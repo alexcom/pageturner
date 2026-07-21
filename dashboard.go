@@ -566,9 +566,6 @@ func (m *DashboardModel) View() string {
 		label := []string{"", "Artist:  ", "Album:   ", "Title:   ", "Out M4B: "}[i]
 		
 		inputView := m.inputs[i].View()
-		if i == dashInputOutFilename {
-			inputView += lipgloss.NewStyle().Foreground(subtextColor).Render(".m4b")
-		}
 		right = append(right, prefix+label+inputView)
 	}
 
