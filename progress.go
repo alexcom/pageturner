@@ -106,11 +106,8 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 		updates:    make(chan tea.Msg),
 		progress:   prog,
 		viewport:   vp,
-		help:       help.New(),
+		help:       newHelpModel(),
 	}
-	m.help.Styles.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
-	m.help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(subtextColor)
-	m.help.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
 
 	m.viewport.SetContent(strings.Join(m.logs, "\n"))
 	return m

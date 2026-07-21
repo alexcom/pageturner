@@ -69,6 +69,7 @@ func newFileManagerModel(dir string) *FileManagerModel {
 	m.list.SetShowStatusBar(false)
 	m.list.SetFilteringEnabled(true)
 	m.list.SetShowTitle(false)
+	applyHelpStyles(&m.list.Help.Styles)
 
 	m.list.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{fmKeys.Open, fmKeys.Back}

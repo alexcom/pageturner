@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -346,3 +347,19 @@ var (
 var (
 	helpStyle = lipgloss.NewStyle().Foreground(subtextColor)
 )
+
+func newHelpModel() help.Model {
+	h := help.New()
+	applyHelpStyles(&h.Styles)
+	return h
+}
+
+func applyHelpStyles(s *help.Styles) {
+	s.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
+	s.ShortDesc = lipgloss.NewStyle().Foreground(subtextColor)
+	s.ShortSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
+	s.FullKey = lipgloss.NewStyle().Foreground(primaryColor)
+	s.FullDesc = lipgloss.NewStyle().Foreground(subtextColor)
+	s.FullSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
+}
+

@@ -143,11 +143,8 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m := &DashboardModel{
 		dir:    dir,
 		inputs: make([]textinput.Model, 4),
-		help:   help.New(),
+		help:   newHelpModel(),
 	}
-	m.help.Styles.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
-	m.help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(subtextColor)
-	m.help.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
 
 	m.fileViewport = viewport.New(41, 10)
 
