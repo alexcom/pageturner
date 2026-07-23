@@ -156,8 +156,9 @@ type DashboardModel struct {
 	coverList list.Model
 
 	// UI state
-	focusIndex int
-	help       help.Model
+	focusIndex  int
+	showConfirm bool
+	help        help.Model
 
 	// Window size
 	width  int
@@ -447,6 +448,17 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
+		if m.showConfirm {
+			if msg.String() == "y" || msg.String() == "Y" || msg.String() == "enter" {
+				m.showConfirm = false
+				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
+			} else if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" {
+				m.showConfirm = false
+				return m, nil
+			}
+			return m, nil
+		}
+
 		if key.Matches(msg, dashKeys.Back) {
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		} else if key.Matches(msg, dashKeys.NavUp, dashKeys.NavDown) {
@@ -489,6 +501,10 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		} else if key.Matches(msg, dashKeys.Confirm) {
 			if len(m.files) > 0 {
+				if dirHasM4B(m.dir) {
+					m.showConfirm = true
+					return m, nil
+				}
 				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
 			}
 			return m, nil
@@ -525,6 +541,20 @@ func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (m *DashboardModel) View() string {
+	if m.showConfirm {
+		dialogBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("9")).
+			Padding(1, 2).
+			Render(lipgloss.JoinVertical(lipgloss.Center,
+				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("Existing M4B File Found"),
+				"",
+				"An .m4b file already exists in this directory.",
+				"Are you sure you want to start conversion? (y/N)",
+			))
+
+		return lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, dialogBox)
+	}
 	paneWidth := (m.width - layoutDocHorizontalMargin - layoutPaneGap) / 2
 	if paneWidth < layoutMinPaneWidth {
 		paneWidth = layoutMinPaneWidth
