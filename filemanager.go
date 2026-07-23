@@ -12,8 +12,10 @@ import (
 )
 
 type item struct {
-	name  string
-	isDir bool
+	name   string
+	isDir  bool
+	isM4B  bool
+	hasM4B bool
 }
 
 func (i item) Title() string {
@@ -89,6 +91,10 @@ func newFileManagerModel(dir string) *FileManagerModel {
 	return m
 }
 
+func dirHasM4B(dirPath string) bool {
+	return len(listFilesByExt(dirPath, ".m4b")) > 0
+}
+
 func (m *FileManagerModel) loadDir(dir string) {
 	m.dir = filepath.Clean(dir)
 	entries, err := os.ReadDir(m.dir)
@@ -103,7 +109,18 @@ func (m *FileManagerModel) loadDir(dir string) {
 		for _, e := range entries {
 			// skip hidden files
 			if !strings.HasPrefix(e.Name(), ".") {
-				items = append(items, item{name: e.Name(), isDir: e.IsDir()})
+				isDir := e.IsDir()
+				isM4B := !isDir && strings.HasSuffix(strings.ToLower(e.Name()), ".m4b")
+				hasM4B := false
+				if isDir {
+					hasM4B = dirHasM4B(filepath.Join(m.dir, e.Name()))
+				}
+				items = append(items, item{
+					name:   e.Name(),
+					isDir:  isDir,
+					isM4B:  isM4B,
+					hasM4B: hasM4B,
+				})
 			}
 		}
 	}
@@ -228,11 +245,19 @@ func (m *FileManagerModel) View() string {
 
 			text := icon + it.name
 
+			var itemColor lipgloss.Color
+			if it.isM4B || it.hasM4B {
+				itemColor = successColor
+			} else {
+				itemColor = textColor
+			}
+
 			if i == sel {
-				line := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> " + text)
+				line := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ") +
+					lipgloss.NewStyle().Foreground(itemColor).Bold(true).Render(text)
 				lines = append(lines, line)
 			} else {
-				line := lipgloss.NewStyle().Foreground(textColor).Render("  " + text)
+				line := lipgloss.NewStyle().Foreground(itemColor).Render("  " + text)
 				lines = append(lines, line)
 			}
 		}
