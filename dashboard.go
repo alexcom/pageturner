@@ -367,7 +367,7 @@ const (
 	layoutDocHorizontalMargin       = 4 // 2 left + 2 right from docStyle
 	layoutPaneGap                   = 2 // gap between left and right panes
 	layoutMinPaneWidth              = 30
-	layoutVerticalNonPaneSpace      = 14 // header stack (7), margins (2), start btn (3), help (1-2)
+	layoutVerticalNonPaneSpace      = 15 // header stack (7), margins (2), framed start btn (4), help (1-2)
 	layoutMinPaneHeight             = 15
 	layoutPaneBorderWidth           = 6 // borders (2) + horizontal padding (4)
 	layoutPaneBorderHeight          = 4 // borders (2) + vertical padding (2)
@@ -634,30 +634,45 @@ func (m *DashboardModel) View() string {
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, lipgloss.NewStyle().Width(2).Render(""), rightStr)
 
-	startBtnStyle := lipgloss.NewStyle().
-		Padding(0, 4).
-		Margin(1, 0)
+	btnText := "START CONVERSION (Enter)"
+	if m.focusIndex == dashStartButton {
+		btnText = "> START CONVERSION (Enter) <"
+	}
+
+	innerBtnStyle := lipgloss.NewStyle().
+		Padding(0, 2)
 
 	if len(m.files) > 0 {
-		startBtnStyle = startBtnStyle.
+		innerBtnStyle = innerBtnStyle.
 			Background(primaryColor).
 			Foreground(lipgloss.Color("0")).
 			Bold(true)
 	} else {
-		startBtnStyle = startBtnStyle.
+		innerBtnStyle = innerBtnStyle.
 			Background(secondaryColor).
 			Foreground(textColor)
 	}
 
-	btnText := "  START CONVERSION (Enter)  "
-	if m.focusIndex == dashStartButton {
-		btnText = "> START CONVERSION (Enter) <"
+	frameStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder())
+
+	if m.focusIndex == dashStartButton && len(m.files) > 0 {
+		frameStyle = frameStyle.BorderForeground(primaryColor)
+	} else {
+		frameStyle = frameStyle.BorderForeground(secondaryColor)
 	}
-	startBtn := startBtnStyle.Render(btnText)
+
+	startBtn := frameStyle.Render(innerBtnStyle.Render(btnText))
+	splitWidth := lipgloss.Width(split)
+	centeredStartBtn := lipgloss.NewStyle().
+		Width(splitWidth).
+		Align(lipgloss.Center).
+		Margin(1, 0).
+		Render(startBtn)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		split,
-		startBtn,
+		centeredStartBtn,
 		"",
 		m.help.View(dashHelpKeys),
 	)
