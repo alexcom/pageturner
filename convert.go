@@ -55,7 +55,7 @@ func parallelConvert(ctx context.Context, targetDir, convertDir string, aBitrate
 		go func(in <-chan string) {
 			for filename := range in {
 				if updates != nil {
-					updates <- msgWorkerUpdate{workerID: workerID, status: "Converting " + filename}
+					updates <- msgWorkerUpdate{workerID: workerID, status: filename}
 				}
 				err := runScriptArgs(ctx, targetDir, ffmpeg, makeArgs(targetDir, convertDir, filename, aBitrate), nil)
 				if err != nil {

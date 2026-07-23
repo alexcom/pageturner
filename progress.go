@@ -85,12 +85,15 @@ type ProgressModel struct {
 	progress progress.Model
 	viewport viewport.Model
 	help     help.Model
+
+	panelWidth int
 }
 
 func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
 	files := listFilesByExt(dir, ".mp3")
 	
 	prog := progress.New(progress.WithDefaultGradient())
+	prog.Width = 48
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
@@ -107,6 +110,7 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 		progress:   prog,
 		viewport:   vp,
 		help:       newHelpModel(),
+		panelWidth: 80,
 	}
 
 	m.viewport.SetContent(strings.Join(m.logs, "\n"))
@@ -130,9 +134,13 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
-		m.progress.Width = msg.Width - h - 4
-		if m.progress.Width > 80 {
-			m.progress.Width = 80
+		m.panelWidth = msg.Width - h - 2
+		if m.panelWidth < 40 {
+			m.panelWidth = 40
+		}
+		m.progress.Width = m.panelWidth - 32
+		if m.progress.Width < 10 {
+			m.progress.Width = 10
 		}
 		
 		titleHeight := 6 // 3 for header box + 1 for dirView + 2 spacing
@@ -233,15 +241,15 @@ func (m *ProgressModel) View() string {
 		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("Complete")
 	}
 
-	progressStr := lipgloss.JoinHorizontal(lipgloss.Left, 
-		m.progress.View(),
-		fmt.Sprintf("  (%d/%d Files) - %s", m.convertedFiles, m.totalFiles, statusText),
-	)
-
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor).
 		Padding(0, 1)
+
+	progressStr := panelStyle.Width(m.panelWidth).Render(lipgloss.JoinHorizontal(lipgloss.Left, 
+		m.progress.View(),
+		fmt.Sprintf("  (%d/%d Files) - %s", m.convertedFiles, m.totalFiles, statusText),
+	))
 
 	// Left: Workers
 	var workers []string
@@ -257,7 +265,7 @@ func (m *ProgressModel) View() string {
 			workers = append(workers, "  "+status)
 		}
 	}
-	leftWidth := (m.progress.Width / 2) - 3
+	leftWidth := (m.panelWidth - 4) / 2
 	if leftWidth < 10 {
 		leftWidth = 10
 	}
@@ -286,7 +294,7 @@ func (m *ProgressModel) View() string {
 		}
 		checklist = append(checklist, fmt.Sprintf("%s %s", status, s))
 	}
-	rightWidth := (m.progress.Width / 2) - 3
+	rightWidth := m.panelWidth - 4 - leftWidth
 	if rightWidth < 10 {
 		rightWidth = 10
 	}
@@ -305,7 +313,7 @@ func (m *ProgressModel) View() string {
 	for i := start; i < len(m.logs); i++ {
 		logLines = append(logLines, m.logs[i])
 	}
-	logsStr := panelStyle.Width(m.progress.Width).Render(lipgloss.JoinVertical(lipgloss.Left, logLines...))
+	logsStr := panelStyle.Width(m.panelWidth).Render(lipgloss.JoinVertical(lipgloss.Left, logLines...))
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		progressStr,

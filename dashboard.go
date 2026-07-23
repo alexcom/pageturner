@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -24,6 +23,38 @@ type simpleItem string
 func (i simpleItem) Title() string       { return string(i) }
 func (i simpleItem) Description() string { return "" }
 func (i simpleItem) FilterValue() string { return string(i) }
+
+type fileDelegate struct{ m *DashboardModel }
+
+func (d fileDelegate) Height() int                             { return 1 }
+func (d fileDelegate) Spacing() int                            { return 0 }
+func (d fileDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+func (d fileDelegate) Render(w io.Writer, l list.Model, index int, item list.Item) {
+	i, ok := item.(simpleItem)
+	if !ok {
+		return
+	}
+
+	prefix := "  "
+	if index == l.Index() {
+		if d.m.focusIndex == dashFileList {
+			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("┃ ")
+		} else {
+			prefix = "┃ "
+		}
+	}
+
+	fname := string(i)
+	maxLen := l.Width() - 4
+	if maxLen < 10 {
+		maxLen = 10
+	}
+	if len([]rune(fname)) > maxLen {
+		fname = string([]rune(fname)[:maxLen-3]) + "..."
+	}
+
+	fmt.Fprint(w, prefix+fname)
+}
 
 type coverDelegate struct{ m *DashboardModel }
 
@@ -109,7 +140,7 @@ type DashboardModel struct {
 
 	// Left column
 	files        []string
-	fileViewport viewport.Model
+	fileList     list.Model
 	bitrate      int
 	removeSource bool
 
@@ -146,7 +177,12 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 		help:   newHelpModel(),
 	}
 
-	m.fileViewport = viewport.New(41, 10)
+	m.fileList = list.New([]list.Item{}, fileDelegate{m: m}, 41, 10)
+	m.fileList.SetShowTitle(false)
+	m.fileList.SetShowStatusBar(false)
+	m.fileList.SetShowFilter(false)
+	m.fileList.SetShowHelp(false)
+	m.fileList.SetShowPagination(false)
 
 	m.coverList = list.New([]list.Item{}, coverDelegate{m: m}, 41, 8)
 	m.coverList.SetShowTitle(false)
@@ -182,30 +218,11 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 }
 
 func (m *DashboardModel) updateViewport() {
-	var listLines []string
-	prefix := "  "
-	if m.focusIndex == dashFileList {
-		prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("┃ ")
-	}
-
-	if len(m.files) == 0 {
-		m.fileViewport.SetContent("  No MP3 files found.")
-		return
-	}
-
+	var items []list.Item
 	for _, f := range m.files {
-		fname := f
-		// truncate based on viewport width
-		maxLen := m.fileViewport.Width - 4
-		if maxLen < 10 {
-			maxLen = 10
-		}
-		if len([]rune(fname)) > maxLen {
-			fname = string([]rune(fname)[:maxLen-3]) + "..."
-		}
-		listLines = append(listLines, prefix+fname)
+		items = append(items, simpleItem(f))
 	}
-	m.fileViewport.SetContent(strings.Join(listLines, "\n"))
+	m.fileList.SetItems(items)
 }
 
 func (m *DashboardModel) IsEditingText() bool {
@@ -365,12 +382,12 @@ func (m *DashboardModel) updateLayout(w, h int) {
 		contentWidth = layoutMinContentWidth
 	}
 
-	m.fileViewport.Width = contentWidth
+	m.fileList.SetWidth(contentWidth)
 	vpHeight := paneHeight - layoutLeftPaneNonViewportHeight
 	if vpHeight < layoutMinComponentHeight {
 		vpHeight = layoutMinComponentHeight
 	}
-	m.fileViewport.Height = vpHeight
+	m.fileList.SetHeight(vpHeight)
 
 	m.coverList.SetWidth(contentWidth)
 
@@ -406,7 +423,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		if m.focusIndex == dashFileList {
 			var cmd tea.Cmd
-			m.fileViewport, cmd = m.fileViewport.Update(msg)
+			m.fileList, cmd = m.fileList.Update(msg)
 			return m, cmd
 		} else if m.focusIndex == dashCoverSelection {
 			var cmd tea.Cmd
@@ -421,7 +438,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.focusIndex == dashFileList && (msg.String() == "up" || msg.String() == "down") {
 				var cmd tea.Cmd
-				m.fileViewport, cmd = m.fileViewport.Update(msg)
+				m.fileList, cmd = m.fileList.Update(msg)
 				return m, cmd
 			}
 			if m.focusIndex == dashCoverSelection && (msg.String() == "up" || msg.String() == "down") {
@@ -570,8 +587,14 @@ func (m *DashboardModel) View() string {
 	var right []string
 	right = append(right, lipgloss.NewStyle().Bold(true).Render("DISCOVERED MP3 FILES"), "")
 
-	listBlock := m.fileViewport.View()
-	right = append(right, listBlock, "")
+	if len(m.files) == 0 {
+		right = append(right, "  No MP3 files found.")
+	} else {
+		for _, line := range strings.Split(m.fileList.View(), "\n") {
+			right = append(right, line)
+		}
+	}
+	right = append(right, "")
 
 	bitrateStr := "Detected Bitrate: Unknown"
 	if m.bitrate > 0 {
@@ -594,14 +617,16 @@ func (m *DashboardModel) View() string {
 
 	startBtnStyle := lipgloss.NewStyle().
 		Padding(0, 4).
-		Margin(1, 0)
+		Margin(1, 0).
+		Background(primaryColor).
+		Foreground(lipgloss.Color("0")).
+		Bold(true)
 
+	btnText := "  START CONVERSION (Enter)  "
 	if m.focusIndex == dashStartButton {
-		startBtnStyle = startBtnStyle.Background(primaryColor).Foreground(lipgloss.Color("0")).Bold(true)
-	} else {
-		startBtnStyle = startBtnStyle.Background(secondaryColor).Foreground(textColor)
+		btnText = "> START CONVERSION (Enter) <"
 	}
-	startBtn := startBtnStyle.Render("START CONVERSION (Enter)")
+	startBtn := startBtnStyle.Render(btnText)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		split,
