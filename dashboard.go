@@ -472,7 +472,10 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		} else if key.Matches(msg, dashKeys.Confirm) {
-			return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
+			if len(m.files) > 0 {
+				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
+			}
+			return m, nil
 		} else if key.Matches(msg, dashKeys.Toggle) {
 			if m.focusIndex == dashRemoveSourceToggle {
 				m.removeSource = !m.removeSource
@@ -617,10 +620,18 @@ func (m *DashboardModel) View() string {
 
 	startBtnStyle := lipgloss.NewStyle().
 		Padding(0, 4).
-		Margin(1, 0).
-		Background(primaryColor).
-		Foreground(lipgloss.Color("0")).
-		Bold(true)
+		Margin(1, 0)
+
+	if len(m.files) > 0 {
+		startBtnStyle = startBtnStyle.
+			Background(primaryColor).
+			Foreground(lipgloss.Color("0")).
+			Bold(true)
+	} else {
+		startBtnStyle = startBtnStyle.
+			Background(secondaryColor).
+			Foreground(textColor)
+	}
 
 	btnText := "  START CONVERSION (Enter)  "
 	if m.focusIndex == dashStartButton {
