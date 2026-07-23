@@ -98,6 +98,7 @@ var dashKeys = struct {
 	Confirm     key.Binding
 	Toggle      key.Binding
 	SwitchCover key.Binding
+	Theme       key.Binding
 }{
 	Back: key.NewBinding(
 		key.WithKeys("esc"),
@@ -127,12 +128,16 @@ var dashKeys = struct {
 		key.WithKeys("c", "C"),
 		key.WithHelp("c", "cover"),
 	),
+	Theme: key.NewBinding(
+		key.WithKeys("t", "T"),
+		key.WithHelp("t", "theme"),
+	),
 }
 
 type dashboardKeyMap struct{}
 
 func (k dashboardKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Back, dashKeys.Quit}
+	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Theme, dashKeys.Back, dashKeys.Quit}
 }
 func (k dashboardKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
@@ -163,6 +168,13 @@ type DashboardModel struct {
 	// Window size
 	width  int
 	height int
+}
+
+func (m *DashboardModel) updateThemeStyles() {
+	for i := range m.inputs {
+		m.inputs[i].Cursor.Style = lipgloss.NewStyle().Foreground(primaryColor)
+	}
+	applyHelpStyles(&m.help.Styles)
 }
 
 const (
@@ -201,7 +213,7 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	for i := range m.inputs {
 		t := textinput.New()
 		t.Prompt = ""
-		t.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+		t.Cursor.Style = lipgloss.NewStyle().Foreground(primaryColor)
 		t.CharLimit = 128
 
 		switch i {
@@ -544,10 +556,10 @@ func (m *DashboardModel) View() string {
 	if m.showConfirm {
 		dialogBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("9")).
+			BorderForeground(errorColor).
 			Padding(1, 2).
 			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("Existing M4B File Found"),
+				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Existing M4B File Found"),
 				"",
 				"An .m4b file already exists in this directory.",
 				"Are you sure you want to start conversion? (y/N)",
@@ -675,7 +687,7 @@ func (m *DashboardModel) View() string {
 	if len(m.files) > 0 {
 		innerBtnStyle = innerBtnStyle.
 			Background(primaryColor).
-			Foreground(lipgloss.Color("0")).
+			Foreground(dirBadgeFg).
 			Bold(true)
 	} else {
 		innerBtnStyle = innerBtnStyle.

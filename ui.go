@@ -10,11 +10,16 @@ import (
 )
 
 var uiKeys = struct {
-	Quit key.Binding
+	Quit  key.Binding
+	Theme key.Binding
 }{
 	Quit: key.NewBinding(
 		key.WithKeys("ctrl+c", "q"),
 		key.WithHelp("q", "quit"),
+	),
+	Theme: key.NewBinding(
+		key.WithKeys("t", "T"),
+		key.WithHelp("t", "theme"),
 	),
 }
 
@@ -154,6 +159,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		if msg.String() == "t" || msg.String() == "T" {
+			editingText := (m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText())
+			settingFilter := (m.state == stateFileManager && m.fileManager != nil && m.fileManager.list.SettingFilter())
+
+			if !editingText && !settingFilter {
+				m.toggleTheme()
+				return m, nil
+			}
+		}
+
 		if msg.String() == "esc" && m.state == stateProgress && m.done {
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		}
@@ -289,14 +304,14 @@ func (m *UI) View() string {
 	if m.err != nil {
 		errorBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("9")). // Red
+			BorderForeground(errorColor).
 			Padding(1, 2).
 			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("FATAL ERROR"),
+				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("FATAL ERROR"),
 				"",
 				m.err.Error(),
 				"",
-				helpStyle.Render("Press any key to exit"),
+				helpStyle().Render("Press any key to exit"),
 			))
 
 		baseView = baseView + "\n\n" + errorBox
@@ -309,8 +324,8 @@ func (m *UI) View() string {
 	header := m.headerView()
 
 	dirView := lipgloss.NewStyle().
-		Background(lipgloss.Color("6")). // Cyan
-		Foreground(lipgloss.Color("0")). // Black text
+		Background(dirBadgeBg).
+		Foreground(dirBadgeFg).
 		Padding(0, 1).
 		Render(m.dir)
 
@@ -319,10 +334,10 @@ func (m *UI) View() string {
 	if m.showQuitConfirm {
 		dialogBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("9")).
+			BorderForeground(errorColor).
 			Padding(1, 2).
 			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("Quit Conversion?"),
+				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Quit Conversion?"),
 				"",
 				"Conversion is currently running.",
 				"Are you sure you want to quit? (y/N)",
@@ -336,18 +351,111 @@ func (m *UI) View() string {
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2, 0, 2)
 
-var (
-	primaryColor   = lipgloss.Color("#00ADB5")
-	secondaryColor = lipgloss.Color("#393E46")
-	textColor      = lipgloss.Color("#EEEEEE")
-	subtextColor   = lipgloss.Color("#AAAAAA")
-	errorColor     = lipgloss.Color("#FF2E63")
-	successColor   = lipgloss.Color("#00D846")
+type ThemeKind int
+
+const (
+	ThemeDark ThemeKind = iota
+	ThemeLight
 )
 
+type Theme struct {
+	IsDark     bool
+	Primary    lipgloss.Color
+	Secondary  lipgloss.Color
+	Text       lipgloss.Color
+	Subtext    lipgloss.Color
+	Error      lipgloss.Color
+	Success    lipgloss.Color
+	Warning    lipgloss.Color
+	DirBadgeBg lipgloss.Color
+	DirBadgeFg lipgloss.Color
+}
+
 var (
-	helpStyle = lipgloss.NewStyle().Foreground(subtextColor)
+	currentThemeKind = ThemeDark
+
+	DarkTheme = Theme{
+		IsDark:     true,
+		Primary:    lipgloss.Color("#00ADB5"),
+		Secondary:  lipgloss.Color("#393E46"),
+		Text:       lipgloss.Color("#EEEEEE"),
+		Subtext:    lipgloss.Color("#AAAAAA"),
+		Error:      lipgloss.Color("#FF2E63"),
+		Success:    lipgloss.Color("#00D846"),
+		Warning:    lipgloss.Color("#FFB800"),
+		DirBadgeBg: lipgloss.Color("#00ADB5"),
+		DirBadgeFg: lipgloss.Color("#1A1A1A"),
+	}
+
+	LightTheme = Theme{
+		IsDark:     false,
+		Primary:    lipgloss.Color("#005F73"),
+		Secondary:  lipgloss.Color("#CBD5E1"),
+		Text:       lipgloss.Color("#0F172A"),
+		Subtext:    lipgloss.Color("#64748B"),
+		Error:      lipgloss.Color("#DC2626"),
+		Success:    lipgloss.Color("#059669"),
+		Warning:    lipgloss.Color("#D97706"),
+		DirBadgeBg: lipgloss.Color("#005F73"),
+		DirBadgeFg: lipgloss.Color("#FFFFFF"),
+	}
+
+	primaryColor   lipgloss.Color
+	secondaryColor lipgloss.Color
+	textColor      lipgloss.Color
+	subtextColor   lipgloss.Color
+	errorColor     lipgloss.Color
+	successColor   lipgloss.Color
+	warningColor   lipgloss.Color
+	dirBadgeBg     lipgloss.Color
+	dirBadgeFg     lipgloss.Color
 )
+
+func applyTheme(kind ThemeKind) {
+	currentThemeKind = kind
+	t := DarkTheme
+	if kind == ThemeLight {
+		t = LightTheme
+	}
+	primaryColor = t.Primary
+	secondaryColor = t.Secondary
+	textColor = t.Text
+	subtextColor = t.Subtext
+	errorColor = t.Error
+	successColor = t.Success
+	warningColor = t.Warning
+	dirBadgeBg = t.DirBadgeBg
+	dirBadgeFg = t.DirBadgeFg
+}
+
+func init() {
+	applyTheme(ThemeDark)
+}
+
+func (m *UI) toggleTheme() {
+	if currentThemeKind == ThemeDark {
+		applyTheme(ThemeLight)
+	} else {
+		applyTheme(ThemeDark)
+	}
+	m.updateAllThemeStyles()
+}
+
+func (m *UI) updateAllThemeStyles() {
+	if m.fileManager != nil {
+		m.fileManager.updateThemeStyles()
+	}
+	if m.dashboard != nil {
+		m.dashboard.updateThemeStyles()
+	}
+	if m.progress != nil {
+		m.progress.updateThemeStyles()
+	}
+}
+
+func helpStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(subtextColor)
+}
 
 func newHelpModel() help.Model {
 	h := help.New()

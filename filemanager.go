@@ -36,10 +36,11 @@ func (i item) Description() string {
 func (i item) FilterValue() string { return i.name }
 
 var fmKeys = struct {
-	Open key.Binding
-	Back key.Binding
-	Dir  key.Binding
-	Quit key.Binding
+	Open  key.Binding
+	Back  key.Binding
+	Dir   key.Binding
+	Theme key.Binding
+	Quit  key.Binding
 }{
 	Open: key.NewBinding(
 		key.WithKeys("enter", "o", " "),
@@ -53,6 +54,10 @@ var fmKeys = struct {
 		key.WithKeys("right", "l"),
 		key.WithHelp("→/l", "enter dir"),
 	),
+	Theme: key.NewBinding(
+		key.WithKeys("t", "T"),
+		key.WithHelp("t", "theme"),
+	),
 	Quit: key.NewBinding(
 		key.WithKeys("q"),
 		key.WithHelp("q", "quit"),
@@ -63,6 +68,10 @@ type FileManagerModel struct {
 	dir       string
 	list      list.Model
 	topOffset int
+}
+
+func (m *FileManagerModel) updateThemeStyles() {
+	applyHelpStyles(&m.list.Help.Styles)
 }
 
 func newFileManagerModel(dir string) *FileManagerModel {
@@ -83,7 +92,7 @@ func newFileManagerModel(dir string) *FileManagerModel {
 	applyHelpStyles(&m.list.Help.Styles)
 
 	m.list.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{fmKeys.Open, fmKeys.Back, fmKeys.Quit}
+		return []key.Binding{fmKeys.Open, fmKeys.Back, fmKeys.Theme, fmKeys.Quit}
 	}
 	m.list.AdditionalFullHelpKeys = m.list.AdditionalShortHelpKeys
 

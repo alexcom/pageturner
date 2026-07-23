@@ -17,6 +17,7 @@ var progKeys = struct {
 	ToggleLogs key.Binding
 	Quit       key.Binding
 	Back       key.Binding
+	Theme      key.Binding
 }{
 	ToggleLogs: key.NewBinding(
 		key.WithKeys("l", "L"),
@@ -30,12 +31,16 @@ var progKeys = struct {
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
 	),
+	Theme: key.NewBinding(
+		key.WithKeys("t", "T"),
+		key.WithHelp("t", "theme"),
+	),
 }
 
 type progressKeyMap struct{}
 
 func (k progressKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{progKeys.ToggleLogs, progKeys.Back, progKeys.Quit}
+	return []key.Binding{progKeys.ToggleLogs, progKeys.Theme, progKeys.Back, progKeys.Quit}
 }
 func (k progressKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
@@ -89,6 +94,14 @@ type ProgressModel struct {
 	panelWidth int
 }
 
+func (m *ProgressModel) updateThemeStyles() {
+	m.viewport.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(secondaryColor).
+		PaddingRight(2)
+	applyHelpStyles(&m.help.Styles)
+}
+
 func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
 	files := listFilesByExt(dir, ".mp3")
 	
@@ -97,7 +110,7 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderForeground(secondaryColor).
 		PaddingRight(2)
 		
 	m := &ProgressModel{
@@ -234,11 +247,11 @@ func (m *ProgressModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), "", m.help.View(progHelpKeys))
 	}
 
-	statusText := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Working...")
+	statusText := lipgloss.NewStyle().Foreground(warningColor).Render("Working...")
 	if m.cancelled {
-		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Cancelled")
+		statusText = lipgloss.NewStyle().Foreground(errorColor).Render("Cancelled")
 	} else if m.currentStep >= 6 {
-		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("Complete")
+		statusText = lipgloss.NewStyle().Foreground(successColor).Render("Complete")
 	}
 
 	panelStyle := lipgloss.NewStyle().
@@ -260,7 +273,7 @@ func (m *ProgressModel) View() string {
 			status = string([]rune(status)[:37]) + "..."
 		}
 		if status == "Idle" {
-			workers = append(workers, "  "+lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Idle"))
+			workers = append(workers, "  "+lipgloss.NewStyle().Foreground(subtextColor).Render("Idle"))
 		} else {
 			workers = append(workers, "  "+status)
 		}
@@ -286,11 +299,11 @@ func (m *ProgressModel) View() string {
 	for i, s := range steps {
 		status := "[ ]"
 		if m.cancelled && i == m.currentStep {
-			status = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("[✗]")
+			status = lipgloss.NewStyle().Foreground(errorColor).Render("[✗]")
 		} else if i < m.currentStep {
-			status = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("[✔]")
+			status = lipgloss.NewStyle().Foreground(successColor).Render("[✔]")
 		} else if i == m.currentStep {
-			status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("[❯]")
+			status = lipgloss.NewStyle().Foreground(warningColor).Render("[❯]")
 		}
 		checklist = append(checklist, fmt.Sprintf("%s %s", status, s))
 	}
