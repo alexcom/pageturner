@@ -53,12 +53,13 @@ type format struct {
 	Duration  string `json:"duration"`
 	BitRate   string `json:"bit_rate"`
 	Tags      struct {
-		Album  string `json:"album"`
-		Genre  string `json:"genre"`
-		Title  string `json:"title"`
-		Artist string `json:"artist"`
-		Disc   string `json:"disc"`
-		Track  string `json:"track"`
+		Album     string `json:"album"`
+		Genre     string `json:"genre"`
+		Title     string `json:"title"`
+		Artist    string `json:"artist"`
+		Disc      string `json:"disc"`
+		Track     string `json:"track"`
+		Performer string `json:"performer"`
 	} `json:"tags"`
 }
 
@@ -148,6 +149,11 @@ func generateFFMETA(ctx context.Context, targetDir, convertDir string, config Co
 	if config.Artist != "" { tagBag.Format.Tags["artist"] = config.Artist }
 	if config.Album != "" { tagBag.Format.Tags["album"] = config.Album }
 	if config.Title != "" { tagBag.Format.Tags["title"] = config.Title }
+	if config.Performer != "" {
+		tagBag.Format.Tags["performer"] = config.Performer
+	} else {
+		delete(tagBag.Format.Tags, "performer")
+	}
 
 	data := struct {
 		Chapters   []track

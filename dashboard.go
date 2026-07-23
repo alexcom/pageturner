@@ -163,6 +163,7 @@ const (
 	dashInputArtist = iota
 	dashInputAlbum
 	dashInputTitle
+	dashInputPerformer
 	dashInputOutFilename
 	dashCoverSelection
 	dashRemoveSourceToggle
@@ -173,7 +174,7 @@ const (
 func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m := &DashboardModel{
 		dir:    dir,
-		inputs: make([]textinput.Model, 4),
+		inputs: make([]textinput.Model, 5),
 		help:   newHelpModel(),
 	}
 
@@ -204,6 +205,8 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 			t.Placeholder = "Album"
 		case dashInputTitle:
 			t.Placeholder = "Title"
+		case dashInputPerformer:
+			t.Placeholder = "Performer"
 		case dashInputOutFilename:
 			t.Placeholder = "Output Filename"
 		}
@@ -234,7 +237,7 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 	m.updateViewport()
 
 	if len(m.files) > 0 {
-		artist, album, title := "", "", ""
+		artist, album, title, performer := "", "", "", ""
 		bb, err := getMetaJsonBytes(ctx, m.dir, m.files[0])
 		if err == nil {
 			var fileMeta container
@@ -242,6 +245,7 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 				artist = fileMeta.Format.Tags.Artist
 				album = fileMeta.Format.Tags.Album
 				title = fileMeta.Format.Tags.Title
+				performer = fileMeta.Format.Tags.Performer
 			}
 		}
 
@@ -265,6 +269,12 @@ func (m *DashboardModel) scanDirectory(ctx context.Context) {
 			m.inputs[dashInputTitle].SetValue(title)
 		} else {
 			m.inputs[dashInputTitle].SetValue("Unknown Title")
+		}
+
+		if performer != "" {
+			m.inputs[dashInputPerformer].SetValue(performer)
+		} else {
+			m.inputs[dashInputPerformer].SetValue("")
 		}
 
 		outName := ""
@@ -334,6 +344,7 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 		Artist:       m.inputs[dashInputArtist].Value(),
 		Album:        m.inputs[dashInputAlbum].Value(),
 		Title:        m.inputs[dashInputTitle].Value(),
+		Performer:    m.inputs[dashInputPerformer].Value(),
 		OutFilename:  outFn,
 		CoverSource:  m.coverList.Index(),
 		CoverPath:    coverPath,
@@ -358,7 +369,7 @@ const (
 	layoutMinContentWidth           = 10
 	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
 	layoutMinComponentHeight        = 3
-	layoutMetaPrefixLabelWidth      = 12 // prefix (2) + label (9) + textinput cursor margin (1)
+	layoutMetaPrefixLabelWidth      = 14 // prefix (2) + label (11) + textinput cursor margin (1)
 	layoutOutPrefixWidth            = 3  // prefix (2) + textinput cursor margin (1)
 )
 
@@ -402,7 +413,7 @@ func (m *DashboardModel) updateLayout(w, h int) {
 	if wArtistAlbumTitle < 1 {
 		wArtistAlbumTitle = 1
 	}
-	for _, idx := range []int{dashInputArtist, dashInputAlbum, dashInputTitle} {
+	for _, idx := range []int{dashInputArtist, dashInputAlbum, dashInputTitle, dashInputPerformer} {
 		m.inputs[idx].Width = wArtistAlbumTitle
 		m.inputs[idx].SetCursor(m.inputs[idx].Position())
 	}
@@ -539,12 +550,12 @@ func (m *DashboardModel) View() string {
 	// Left: Metadata & Output M4B File
 	var left []string
 	left = append(left, lipgloss.NewStyle().Bold(true).Render("METADATA"), "")
-	for i := dashInputArtist; i <= dashInputTitle; i++ {
+	for i := dashInputArtist; i <= dashInputPerformer; i++ {
 		prefix := "  "
 		if m.focusIndex == i {
 			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
 		}
-		label := []string{"Artist:  ", "Album:   ", "Title:   "}[i]
+		label := []string{"Artist:    ", "Album:     ", "Title:     ", "Performer: "}[i]
 
 		inputView := m.inputs[i].View()
 		left = append(left, prefix+label+inputView)

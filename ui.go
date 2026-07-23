@@ -94,6 +94,7 @@ type ConversionConfig struct {
 	Album        string
 	Artist       string
 	Title        string
+	Performer    string
 	OutFilename  string
 	CoverSource  int    // index or type of cover
 	CoverPath    string // actual path or empty if default
