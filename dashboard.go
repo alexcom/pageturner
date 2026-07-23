@@ -91,6 +91,7 @@ func (d coverDelegate) Render(w io.Writer, l list.Model, index int, item list.It
 }
 
 var dashKeys = struct {
+	Back        key.Binding
 	Quit        key.Binding
 	NavUp       key.Binding
 	NavDown     key.Binding
@@ -98,9 +99,13 @@ var dashKeys = struct {
 	Toggle      key.Binding
 	SwitchCover key.Binding
 }{
-	Quit: key.NewBinding(
+	Back: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q"),
+		key.WithHelp("q", "quit"),
 	),
 	NavUp: key.NewBinding(
 		key.WithKeys("up", "shift+tab"),
@@ -127,7 +132,7 @@ var dashKeys = struct {
 type dashboardKeyMap struct{}
 
 func (k dashboardKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Quit}
+	return []key.Binding{dashKeys.NavUp, dashKeys.NavDown, dashKeys.Confirm, dashKeys.Toggle, dashKeys.SwitchCover, dashKeys.Back, dashKeys.Quit}
 }
 func (k dashboardKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
@@ -442,7 +447,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
-		if key.Matches(msg, dashKeys.Quit) {
+		if key.Matches(msg, dashKeys.Back) {
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		} else if key.Matches(msg, dashKeys.NavUp, dashKeys.NavDown) {
 			isUp := key.Matches(msg, dashKeys.NavUp)

@@ -37,6 +37,7 @@ var fmKeys = struct {
 	Open key.Binding
 	Back key.Binding
 	Dir  key.Binding
+	Quit key.Binding
 }{
 	Open: key.NewBinding(
 		key.WithKeys("enter", "o", " "),
@@ -49,6 +50,10 @@ var fmKeys = struct {
 	Dir: key.NewBinding(
 		key.WithKeys("right", "l"),
 		key.WithHelp("→/l", "enter dir"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q"),
+		key.WithHelp("q", "quit"),
 	),
 }
 
@@ -76,7 +81,7 @@ func newFileManagerModel(dir string) *FileManagerModel {
 	applyHelpStyles(&m.list.Help.Styles)
 
 	m.list.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{fmKeys.Open, fmKeys.Back}
+		return []key.Binding{fmKeys.Open, fmKeys.Back, fmKeys.Quit}
 	}
 	m.list.AdditionalFullHelpKeys = m.list.AdditionalShortHelpKeys
 
