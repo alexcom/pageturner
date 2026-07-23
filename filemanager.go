@@ -111,8 +111,10 @@ func (m *FileManagerModel) loadDir(dir string) {
 
 	// List title is managed by the main UI
 
-	// Always add parent
-	items = append(items, item{name: "..", isDir: true})
+	// Add parent if not at root
+	if parentDir := filepath.Dir(m.dir); parentDir != m.dir {
+		items = append(items, item{name: "..", isDir: true})
+	}
 
 	if err == nil {
 		for _, e := range entries {
