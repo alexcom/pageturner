@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type item struct {
@@ -52,8 +53,9 @@ var fmKeys = struct {
 }
 
 type FileManagerModel struct {
-	dir  string
-	list list.Model
+	dir       string
+	list      list.Model
+	topOffset int
 }
 
 func newFileManagerModel(dir string) *FileManagerModel {
@@ -67,6 +69,7 @@ func newFileManagerModel(dir string) *FileManagerModel {
 
 	m.list = list.New([]list.Item{}, delegate, 80, 25)
 	m.list.SetShowStatusBar(false)
+	m.list.SetShowPagination(false)
 	m.list.SetFilteringEnabled(true)
 	m.list.SetShowTitle(false)
 	m.list.KeyMap.Quit = key.NewBinding()
@@ -101,6 +104,7 @@ func (m *FileManagerModel) loadDir(dir string) {
 	}
 	m.list.SetItems(items)
 	m.list.ResetSelected()
+	m.topOffset = 0
 }
 
 func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
@@ -168,5 +172,71 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *FileManagerModel) View() string {
-	return m.list.View()
+	var lines []string
+
+	if m.list.SettingFilter() || m.list.FilterValue() != "" {
+		lines = append(lines, m.list.FilterInput.View(), "")
+	}
+
+	items := m.list.VisibleItems()
+	n := len(items)
+
+	availHeight := m.list.Height()
+	if m.list.SettingFilter() || m.list.FilterValue() != "" {
+		availHeight -= 2
+	}
+	availHeight -= 2 // reserved for help bar & spacing
+	if availHeight < 1 {
+		availHeight = 1
+	}
+
+	sel := m.list.Index()
+
+	if sel < m.topOffset {
+		m.topOffset = sel
+	}
+	if sel >= m.topOffset+availHeight {
+		m.topOffset = sel - availHeight + 1
+	}
+	if m.topOffset > n-availHeight {
+		m.topOffset = n - availHeight
+	}
+	if m.topOffset < 0 {
+		m.topOffset = 0
+	}
+
+	if n == 0 {
+		lines = append(lines, "  No files found.")
+	} else {
+		for i := m.topOffset; i < m.topOffset+availHeight && i < n; i++ {
+			it, ok := items[i].(item)
+			if !ok {
+				continue
+			}
+
+			var icon string
+			if it.isDir {
+				icon = "📁 "
+			} else {
+				icon = "📄 "
+			}
+
+			text := icon + it.name
+
+			if i == sel {
+				line := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> " + text)
+				lines = append(lines, line)
+			} else {
+				line := lipgloss.NewStyle().Foreground(textColor).Render("  " + text)
+				lines = append(lines, line)
+			}
+		}
+	}
+
+	for len(lines) < availHeight {
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, "", m.list.Help.View(m.list))
+	return strings.Join(lines, "\n")
 }
