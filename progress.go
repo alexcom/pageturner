@@ -62,6 +62,40 @@ type msgProgress struct {
 	total     int
 }
 
+// Pipeline step weights for overall progress calculation.
+// Step 0: Prerequisites (2%), Step 1: Conversion (82%), Step 2: Cover (2%),
+// Step 3: Metadata (2%), Step 4: Merge (10%), Step 5: Cleanup (2%).
+const numPipelineSteps = 6
+
+var stepWeights = [numPipelineSteps]float64{0.02, 0.82, 0.02, 0.02, 0.10, 0.02}
+
+// overallProgress returns [0.0, 1.0] combining step advancement with
+// fine-grained file-level progress during conversion (step 1).
+func overallProgress(currentStep, convertedFiles, totalFiles int) float64 {
+	pct := 0.0
+
+	for step := 0; step < numPipelineSteps; step++ {
+		if step > currentStep {
+			break
+		}
+
+		w := stepWeights[step]
+
+		if step < currentStep {
+			// Step already completed.
+			pct += w
+		} else if step == currentStep && step == 1 && totalFiles > 0 {
+			// Subdivide conversion weight among individual files.
+			pct += w * (float64(convertedFiles) / float64(totalFiles))
+		}
+	}
+
+	if pct > 1.0 {
+		pct = 1.0
+	}
+	return pct
+}
+
 type msgStepAdvance struct {
 	step int
 }
@@ -207,15 +241,13 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgProgress:
 		m.convertedFiles = msg.completed
 		m.totalFiles = msg.total
-		pct := 0.0
-		if m.totalFiles > 0 {
-			pct = float64(m.convertedFiles) / float64(m.totalFiles)
-		}
+		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
 		return m, tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
 
 	case msgStepAdvance:
 		m.currentStep = msg.step
-		return m, waitForUpdate(m.updates)
+		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
+		return m, tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
 
 	case msgInitWorkers:
 		m.workers = make([]string, msg.count)
@@ -259,9 +291,17 @@ func (m *ProgressModel) View() string {
 		BorderForeground(primaryColor).
 		Padding(0, 1)
 
+	pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
+	stepLabel := fmt.Sprintf("  Step %d/%d", m.currentStep+1, numPipelineSteps)
+	if m.currentStep >= numPipelineSteps {
+		stepLabel = fmt.Sprintf("  Step %d/%d", numPipelineSteps, numPipelineSteps)
+	}
+	if m.currentStep == 1 && m.totalFiles > 0 {
+		stepLabel += fmt.Sprintf(" (%d/%d files)", m.convertedFiles, m.totalFiles)
+	}
 	progressStr := panelStyle.Width(m.panelWidth).Render(lipgloss.JoinHorizontal(lipgloss.Left, 
 		m.progress.View(),
-		fmt.Sprintf("  (%d/%d Files) - %s", m.convertedFiles, m.totalFiles, statusText),
+		fmt.Sprintf("%s · %d%% - %s", stepLabel, int(pct*100), statusText),
 	))
 
 	// Left: Workers
