@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -37,7 +38,9 @@ type msgWorkerUpdate struct {
 	status   string
 }
 
+// msgProgress reports how many of a step's items are done.
 type msgProgress struct {
+	step      int
 	completed int
 	total     int
 }
@@ -49,9 +52,30 @@ const numPipelineSteps = 6
 
 var stepWeights = [numPipelineSteps]float64{0.02, 0.82, 0.02, 0.02, 0.10, 0.02}
 
+// Checklist labels per mode, and the unit of each step's item count.
+var (
+	bookSteps = [numPipelineSteps]string{
+		"Check Prerequisites & Scan Directory",
+		"Convert MP3s to M4A (Parallel)",
+		"Resolve Cover Art",
+		"Generate Metadata (FFMETA)",
+		"Merge into M4B",
+		"Clean up temporary files",
+	}
+	storySteps = [numPipelineSteps]string{
+		"Check Prerequisites",
+		"Convert MP3s to M4A (Parallel)",
+		"Resolve a Cover per Story",
+		"Generate Metadata per Story",
+		"Merge each Story into M4B",
+		"Clean up temporary files",
+	}
+	stepUnits = [numPipelineSteps]string{"", "converted", "covers", "tagged", "merged", ""}
+)
+
 // overallProgress returns [0.0, 1.0] combining step advancement with
-// fine-grained file-level progress during conversion (step 1).
-func overallProgress(currentStep, convertedFiles, totalFiles int) float64 {
+// item-level progress inside the current step (files converted, merged...).
+func overallProgress(currentStep, doneItems, totalItems int) float64 {
 	pct := 0.0
 
 	for step := 0; step < numPipelineSteps; step++ {
@@ -64,9 +88,9 @@ func overallProgress(currentStep, convertedFiles, totalFiles int) float64 {
 		if step < currentStep {
 			// Step already completed.
 			pct += w
-		} else if step == currentStep && step == 1 && totalFiles > 0 {
-			// Subdivide conversion weight among individual files.
-			pct += w * (float64(convertedFiles) / float64(totalFiles))
+		} else if step == currentStep && totalItems > 0 {
+			// Subdivide the step's weight among its items.
+			pct += w * (float64(min(doneItems, totalItems)) / float64(totalItems))
 		}
 	}
 
@@ -91,8 +115,9 @@ type ProgressModel struct {
 	ctx    context.Context
 	config ConversionConfig
 
-	totalFiles     int
-	convertedFiles int
+	// Items done/total per step, for steps that report progress.
+	stepDone  [numPipelineSteps]int
+	stepTotal [numPipelineSteps]int
 
 	workers []string
 
@@ -139,7 +164,10 @@ func logBoxStyle() lipgloss.Style {
 }
 
 func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
-	files := listFilesByExt(dir, ".mp3")
+	files := config.Files
+	if config.Mode == ModeBook {
+		files = listFilesByExt(dir, ".mp3")
+	}
 
 	prog := newProgressBar()
 	prog.Width = 48
@@ -147,7 +175,6 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 	m := &ProgressModel{
 		ctx:        ctx,
 		config:     config,
-		totalFiles: len(files),
 		workers:    []string{},
 		logs:       []string{"Starting conversion..."},
 		updates:    make(chan tea.Msg, updatesBuffer),
@@ -156,8 +183,15 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 		help:       newHelpModel(),
 		panelWidth: 80,
 	}
+	m.stepTotal[1] = len(files)
 	m.refreshLogView()
 	return m
+}
+
+// pct is the overall progress of the run.
+func (m *ProgressModel) pct() float64 {
+	s := min(m.currentStep, numPipelineSteps-1)
+	return overallProgress(m.currentStep, m.stepDone[s], m.stepTotal[s])
 }
 
 func (m *ProgressModel) succeeded() bool {
@@ -273,16 +307,16 @@ func (m *ProgressModel) Update(msg tea.Msg) tea.Cmd {
 		return waitForUpdate(m.updates)
 
 	case msgProgress:
-		// Workers report concurrently, so counts may arrive out of order.
-		m.convertedFiles = max(m.convertedFiles, msg.completed)
-		m.totalFiles = msg.total
-		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
-		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
+		if msg.step >= 0 && msg.step < numPipelineSteps {
+			// Workers report concurrently, so counts may arrive out of order.
+			m.stepDone[msg.step] = max(m.stepDone[msg.step], msg.completed)
+			m.stepTotal[msg.step] = msg.total
+		}
+		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(m.pct()))
 
 	case msgStepAdvance:
 		m.currentStep = msg.step
-		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
-		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
+		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(m.pct()))
 
 	case msgInitWorkers:
 		m.workers = make([]string, msg.count)
@@ -338,7 +372,7 @@ func (m *ProgressModel) View() string {
 		statusText = lipgloss.NewStyle().Foreground(errorColor).Render("Failed")
 	} else if m.cancelled {
 		statusText = lipgloss.NewStyle().Foreground(errorColor).Render("Cancelled")
-	} else if m.currentStep >= 6 {
+	} else if m.currentStep >= numPipelineSteps {
 		statusText = lipgloss.NewStyle().Foreground(successColor).Render("Complete")
 	}
 
@@ -347,11 +381,11 @@ func (m *ProgressModel) View() string {
 		BorderForeground(primaryColor).
 		Padding(0, 1)
 
-	pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
+	pct := m.pct()
 	step := min(m.currentStep+1, numPipelineSteps)
 	label := fmt.Sprintf("Step %d/%d", step, numPipelineSteps)
-	if m.currentStep == 1 && m.totalFiles > 0 {
-		label += fmt.Sprintf(" · %d/%d files", m.convertedFiles, m.totalFiles)
+	if s := m.currentStep; s < numPipelineSteps && m.stepTotal[s] > 0 {
+		label += fmt.Sprintf(" · %d/%d %s", m.stepDone[s], m.stepTotal[s], stepUnits[s])
 	}
 	label += fmt.Sprintf(" · %3d%% · %s", int(pct*100), statusText)
 
@@ -413,13 +447,9 @@ func (m *ProgressModel) View() string {
 	if roomy {
 		checklist = append(checklist, "")
 	}
-	steps := []string{
-		"Check Prerequisites & Scan Directory",
-		"Convert MP3s to M4A (Parallel)",
-		"Resolve Cover Art",
-		"Generate Metadata (FFMETA)",
-		"Merge into M4B",
-		"Clean up temporary files",
+	steps := bookSteps
+	if m.config.Mode == ModeStories {
+		steps = storySteps
 	}
 	for i, s := range steps {
 		status := "[ ]"
@@ -498,7 +528,11 @@ func (m *ProgressModel) outputLines(rows, width int) []string {
 			break
 		}
 		note := "  " + o.summary()
-		name := truncateLeft(o.path, max(10, width-2-lipgloss.Width(note)))
+		name := o.path
+		if rel, err := filepath.Rel(m.config.TargetDir, o.path); err == nil && !strings.HasPrefix(rel, "..") {
+			name = rel // stories land next to their MP3s, under the folder shown in the header
+		}
+		name = truncateLeft(name, max(10, width-2-lipgloss.Width(note)))
 		lines = append(lines, ok+name+dim.Render(note))
 	}
 	return lines[:min(len(lines), rows)]

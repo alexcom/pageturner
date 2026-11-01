@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -33,6 +34,10 @@ var fmKeys = struct {
 	Open         key.Binding
 	Back         key.Binding
 	Convert      key.Binding
+	Select       key.Binding
+	SelectAll    key.Binding
+	Book         key.Binding
+	Stories      key.Binding
 	Filter       key.Binding
 	ClearFilter  key.Binding
 	AcceptFilter key.Binding
@@ -47,8 +52,12 @@ var fmKeys = struct {
 	Open:         key.NewBinding(key.WithKeys("enter", "right", "l"), key.WithHelp("enter", "open")),
 	Back:         key.NewBinding(key.WithKeys("left", "h", "backspace"), key.WithHelp("←", "up")),
 	Convert:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "convert")),
+	Select:       key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "select")),
+	SelectAll:    key.NewBinding(key.WithKeys("a")),
+	Book:         key.NewBinding(key.WithKeys("ctrl+b")),
+	Stories:      key.NewBinding(key.WithKeys("ctrl+s")),
 	Filter:       key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
-	ClearFilter:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear filter")),
+	ClearFilter:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear")),
 	AcceptFilter: key.NewBinding(key.WithKeys("enter", "tab", "up", "down"), key.WithHelp("enter", "apply filter")),
 	CancelFilter: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 }
@@ -66,6 +75,7 @@ const (
 // custom rendering about how many rows a page has.
 type FileManagerModel struct {
 	dir     string
+	dirMP3s int // mp3 files in dir itself
 	items   []item
 	visible []int // indexes into items, in filter rank order
 	scroll  scroller
@@ -75,13 +85,17 @@ type FileManagerModel struct {
 
 	notice string // one-off message shown above the help bar until the next key
 
+	// picked holds absolute paths of selected mp3s. It survives moving
+	// between folders, so a selection can span a whole library.
+	picked map[string]bool
+
 	help   help.Model
 	width  int
 	height int
 }
 
 func newFileManagerModel(dir string) *FileManagerModel {
-	m := &FileManagerModel{help: newHelpModel()}
+	m := &FileManagerModel{help: newHelpModel(), picked: map[string]bool{}}
 	m.filter = textinput.New()
 	m.filter.Prompt = "Filter: "
 	applyInputStyles(&m.filter)
@@ -136,6 +150,7 @@ func (m *FileManagerModel) loadDir(dir string) {
 	m.dir = filepath.Clean(dir)
 	entries, err := os.ReadDir(m.dir)
 	m.items = nil
+	m.dirMP3s = 0
 
 	// Add parent if not at root
 	if parentDir := filepath.Dir(m.dir); parentDir != m.dir {
@@ -153,6 +168,9 @@ func (m *FileManagerModel) loadDir(dir string) {
 			} else {
 				ext := strings.ToLower(filepath.Ext(e.Name()))
 				it.isMP3, it.isM4B = ext == ".mp3", ext == ".m4b"
+				if it.isMP3 {
+					m.dirMP3s++
+				}
 			}
 			m.items = append(m.items, it)
 		}
@@ -170,8 +188,14 @@ func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
 	}
 }
 
-// reload re-reads the current directory and keeps the selected entry.
+// reload re-reads the current directory and keeps the highlighted entry.
+// Selected files that no longer exist are dropped.
 func (m *FileManagerModel) reload() {
+	for path := range m.picked {
+		if _, err := os.Stat(path); err != nil {
+			delete(m.picked, path)
+		}
+	}
 	var name string
 	if it, ok := m.selected(); ok {
 		name = it.name
@@ -280,6 +304,20 @@ func (m *FileManagerModel) Update(msg tea.Msg) tea.Cmd {
 		return m.filter.Focus()
 	case key.Matches(keyMsg, fmKeys.ClearFilter) && m.filterState == filterApplied:
 		m.clearFilter()
+	case key.Matches(keyMsg, fmKeys.ClearFilter) && len(m.picked) > 0:
+		m.clearSelection()
+	case key.Matches(keyMsg, fmKeys.Select):
+		m.toggleSelected()
+	case key.Matches(keyMsg, fmKeys.SelectAll):
+		m.toggleFolder(m.dir)
+	case key.Matches(keyMsg, fmKeys.Book):
+		if len(m.picked) > 0 {
+			m.notice = "Selected files are converted as stories: press ctrl+s, or esc to clear the selection"
+			return nil
+		}
+		return m.convertTarget(ModeBook)
+	case key.Matches(keyMsg, fmKeys.Stories):
+		return m.convertTarget(ModeStories)
 	case key.Matches(keyMsg, fmKeys.Back):
 		m.goToParent()
 	case key.Matches(keyMsg, fmKeys.Open):
@@ -291,23 +329,119 @@ func (m *FileManagerModel) Update(msg tea.Msg) tea.Cmd {
 			}
 		}
 	case key.Matches(keyMsg, fmKeys.Convert):
-		return m.convertTarget()
+		return m.convertTarget(ModeBook)
 	}
 	return nil
 }
 
-// convertTarget opens the converter for the highlighted folder, or for the
-// current folder when a file or ".." is highlighted.
-func (m *FileManagerModel) convertTarget() tea.Cmd {
-	dir := m.dir
+// targetDir is the folder c/ctrl+b/ctrl+s convert: the highlighted folder,
+// or the current one when a file or ".." is highlighted.
+func (m *FileManagerModel) targetDir() string {
 	if it, ok := m.selected(); ok && it.isDir && it.name != ".." {
-		dir = filepath.Join(m.dir, it.name)
+		return filepath.Join(m.dir, it.name)
 	}
+	return m.dir
+}
+
+// convertTarget opens the converter: for the selection (always stories) if
+// there is one, otherwise for targetDir in the given mode.
+func (m *FileManagerModel) convertTarget(mode ConversionMode) tea.Cmd {
+	if files := m.selectedFiles(); len(files) > 0 {
+		dir := commonDir(files)
+		return func() tea.Msg { return msgSwitchToDashboard{dir: dir, files: files, mode: ModeStories} }
+	}
+	dir := m.targetDir()
 	if len(listFilesByExt(dir, ".mp3")) == 0 {
 		m.notice = "No MP3 files in " + filepath.Base(dir) + " to convert"
 		return nil
 	}
-	return func() tea.Msg { return msgSwitchToDashboard{dir: dir} }
+	return func() tea.Msg { return msgSwitchToDashboard{dir: dir, mode: mode} }
+}
+
+// selectedFiles returns the selection, sorted.
+func (m *FileManagerModel) selectedFiles() []string {
+	files := make([]string, 0, len(m.picked))
+	for path := range m.picked {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	return files
+}
+
+func (m *FileManagerModel) clearSelection() {
+	m.picked = map[string]bool{}
+}
+
+// toggleSelected selects or unselects the highlighted mp3 (and moves down,
+// so several files can be picked in a row), or all mp3s of a highlighted folder.
+func (m *FileManagerModel) toggleSelected() {
+	it, ok := m.selected()
+	switch {
+	case !ok:
+	case it.isDir && it.name != "..":
+		m.toggleFolder(filepath.Join(m.dir, it.name))
+	case it.isMP3:
+		path := filepath.Join(m.dir, it.name)
+		if m.picked[path] {
+			delete(m.picked, path)
+		} else {
+			m.picked[path] = true
+		}
+		m.scroll.Move(1)
+	default:
+		m.notice = "Only MP3 files can be selected"
+	}
+}
+
+// toggleFolder selects all mp3s directly in dir, or unselects them if all
+// are already selected.
+func (m *FileManagerModel) toggleFolder(dir string) {
+	names := listFilesByExt(dir, ".mp3")
+	if len(names) == 0 {
+		m.notice = "No MP3 files in " + filepath.Base(dir)
+		return
+	}
+	all := true
+	for _, n := range names {
+		all = all && m.picked[filepath.Join(dir, n)]
+	}
+	for _, n := range names {
+		if all {
+			delete(m.picked, filepath.Join(dir, n))
+		} else {
+			m.picked[filepath.Join(dir, n)] = true
+		}
+	}
+}
+
+// selectedIn counts selected files directly inside dir.
+func (m *FileManagerModel) selectedIn(dir string) int {
+	n := 0
+	for path := range m.picked {
+		if filepath.Dir(path) == dir {
+			n++
+		}
+	}
+	return n
+}
+
+// commonDir is the deepest folder that contains all paths.
+func commonDir(paths []string) string {
+	dir := filepath.Dir(paths[0])
+	for _, p := range paths[1:] {
+		for {
+			rel, err := filepath.Rel(dir, p)
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return dir
 }
 
 // ShortHelp implements help.KeyMap with the keys that work right now.
@@ -316,8 +450,8 @@ func (m *FileManagerModel) ShortHelp() []key.Binding {
 		return append([]key.Binding{fmKeys.AcceptFilter, fmKeys.CancelFilter}, globalHelp(true)...)
 	}
 	clear := fmKeys.ClearFilter
-	clear.SetEnabled(m.filterState == filterApplied)
-	return append([]key.Binding{fmKeys.Up, fmKeys.Open, fmKeys.Back, fmKeys.Convert, fmKeys.Filter, clear},
+	clear.SetEnabled(m.filterState == filterApplied || len(m.picked) > 0)
+	return append([]key.Binding{fmKeys.Open, fmKeys.Back, fmKeys.Select, fmKeys.Convert, fmKeys.Filter, clear},
 		globalHelp(false)...)
 }
 
@@ -344,7 +478,7 @@ func (m *FileManagerModel) View() string {
 		lines = append(lines, "")
 	}
 
-	status := ""
+	status := lipgloss.NewStyle().Foreground(subtextColor).Render(truncateText(m.hint(), m.width))
 	if m.notice != "" {
 		status = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
 	}
@@ -352,16 +486,43 @@ func (m *FileManagerModel) View() string {
 	return strings.Join(lines, "\n")
 }
 
+// hint is the status line: what c / ctrl+b / ctrl+s would do right now.
+func (m *FileManagerModel) hint() string {
+	if n := len(m.picked); n > 0 {
+		noun := "files"
+		if n == 1 {
+			noun = "file"
+		}
+		return fmt.Sprintf("%d %s selected · c or ctrl+s: convert as stories · esc: clear", n, noun)
+	}
+	dir, mp3s := m.dir, m.dirMP3s
+	if it, ok := m.selected(); ok && it.isDir && it.name != ".." {
+		dir, mp3s = filepath.Join(m.dir, it.name), it.mp3Count
+	}
+	if mp3s == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: c or ctrl+b convert as a book · ctrl+s as stories", filepath.Base(dir))
+}
+
 // rowView renders one entry: icon and name, then a dim note for folders
 // ("12 mp3 · ✓ m4b") so the colours don't need a legend.
 func (m *FileManagerModel) rowView(it item, current bool) string {
 	icon := "📄 "
-	if it.isDir {
+	path := filepath.Join(m.dir, it.name)
+	picked := it.isMP3 && m.picked[path]
+	switch {
+	case it.isDir:
 		icon = "📁 "
+	case picked:
+		icon = "✓  " // same width as the emoji icons
 	}
 	var notes []string
 	if it.isDir && it.mp3Count > 0 {
 		notes = append(notes, fmt.Sprintf("%d mp3", it.mp3Count))
+		if n := m.selectedIn(path); n > 0 && it.name != ".." {
+			notes = append(notes, fmt.Sprintf("%d selected", n))
+		}
 	}
 	if it.hasM4B {
 		notes = append(notes, "✓ m4b")
@@ -375,6 +536,8 @@ func (m *FileManagerModel) rowView(it item, current bool) string {
 	switch {
 	case it.isM4B || it.hasM4B:
 		nameColor = successColor
+	case picked:
+		nameColor = primaryColor
 	case !it.isDir && !it.isMP3:
 		nameColor = subtextColor
 	}

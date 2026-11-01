@@ -12,6 +12,10 @@ import (
 
 // runConversionPipeline starts the background process
 func runConversionPipeline(ctx context.Context, config ConversionConfig, updates chan tea.Msg) {
+	if config.Mode == ModeStories {
+		runStoriesPipeline(ctx, config, updates)
+		return
+	}
 	defer close(updates) // signal that the channel is closed if we exit
 
 	files := listFilesByExt(config.TargetDir, ".mp3")

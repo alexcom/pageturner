@@ -89,7 +89,7 @@ func newUI(ctx context.Context, initialState state, initialDir string, args Argu
 	case stateFileManager:
 		m.fileManager = newFileManagerModel(initialDir)
 	case stateDashboard, stateProgress:
-		m.dashboard = newDashboardModel(ctx, initialDir, args.RemoveSource)
+		m.dashboard = newDashboardModel(ctx, initialDir, nil, args.mode(), args.RemoveSource)
 		if initialState == stateProgress {
 			// No form to show (gogogo): scan synchronously so the config has tags and bitrate.
 			m.dashboard.applyScan(scanDirectory(ctx, initialDir))
@@ -113,7 +113,9 @@ func (m *UI) Init() tea.Cmd {
 
 // Custom messages to trigger state transitions
 type msgSwitchToDashboard struct {
-	dir string
+	dir   string
+	files []string // selected mp3s (absolute); nil converts all of dir
+	mode  ConversionMode
 }
 
 type msgSwitchToFileManager struct{}
@@ -129,6 +131,8 @@ type ConversionConfig struct {
 	CoverPath    string // absolute path, used when CoverKind == CoverFile
 	RemoveSource bool
 	BitRate      int
+	Mode         ConversionMode
+	Files        []string // stories mode: absolute paths of the MP3s to convert
 }
 
 type msgStartConversion struct {
@@ -220,7 +224,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
 		m.dir = msg.dir
-		m.dashboard = newDashboardModel(m.ctx, msg.dir, m.args.RemoveSource)
+		m.dashboard = newDashboardModel(m.ctx, msg.dir, msg.files, msg.mode, m.args.RemoveSource)
 		m.resizeChildren()
 		return m, m.dashboard.Init()
 
@@ -240,6 +244,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fileManager.Init()
 
 	case msgStartConversion:
+		if m.fileManager != nil {
+			m.fileManager.clearSelection() // the selected files are being converted (maybe removed)
+		}
 		m.state = stateProgress
 		m.dir = msg.config.TargetDir
 		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)

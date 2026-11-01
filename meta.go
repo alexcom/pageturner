@@ -71,10 +71,19 @@ type tagsContainer struct {
 
 func readMetadataFromFilesWithExtension(ctx context.Context, dir, ext string) (_ <-chan bytes.Buffer, err error) {
 	files := listFilesByExt(dir, ext)
-	fileCount := len(files)
-	if fileCount == 0 {
+	if len(files) == 0 {
 		err = errors.New("no " + ext + " files found, check conversion results and error logs")
 		return
+	}
+	return readMetadataFromFiles(ctx, dir, files)
+}
+
+// readMetadataFromFiles probes files (relative to dir, or absolute with dir "")
+// in parallel and returns ffprobe's JSON for each.
+func readMetadataFromFiles(ctx context.Context, dir string, files []string) (_ <-chan bytes.Buffer, err error) {
+	fileCount := len(files)
+	if fileCount == 0 {
+		return nil, errors.New("no files to read metadata from")
 	}
 	wg := sync.WaitGroup{}
 	wg.Add(fileCount)

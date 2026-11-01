@@ -14,6 +14,14 @@ const newFileMode = os.O_APPEND | os.O_RDWR | os.O_CREATE | os.O_TRUNC
 
 type Arguments struct {
 	RemoveSource bool
+	Stories      bool
+}
+
+func (a Arguments) mode() ConversionMode {
+	if a.Stories {
+		return ModeStories
+	}
+	return ModeBook
 }
 
 // collectArguments parses flags and an optional mode (go, gogogo, fm).
@@ -22,6 +30,7 @@ func collectArguments() (Arguments, string) {
 	result := Arguments{}
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.BoolVar(&result.RemoveSource, "remove-source", false, "remove MP3 files if conversion is success")
+	fs.BoolVar(&result.Stories, "stories", false, "convert every MP3 into its own .m4b instead of one book")
 	args := os.Args[1:]
 	var mode string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {

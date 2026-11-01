@@ -32,6 +32,8 @@ var dashKeys = struct {
 	Toggle      key.Binding
 	SwitchCover key.Binding
 	Back        key.Binding
+	Book        key.Binding
+	Stories     key.Binding
 }{
 	// Up/down move focus, except in the cover and file lists where they move
 	// inside the list (ListUp/ListDown are checked first).
@@ -43,17 +45,26 @@ var dashKeys = struct {
 	Toggle:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle")),
 	SwitchCover: key.NewBinding(key.WithKeys("c", "C"), key.WithHelp("c", "cover")),
 	Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	// Ctrl keys work while typing, so they are the mode shortcuts.
+	Book:    key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("^b/^s", "book/stories")),
+	Stories: key.NewBinding(key.WithKeys("ctrl+s")),
 }
 
 type DashboardModel struct {
 	ctx context.Context
 	dir string
 
+	// selection is the file manager's selection (absolute paths); nil means
+	// all MP3s in dir. A selection is always converted as stories.
+	selection []string
+	mode      ConversionMode
+	scan      dirScan
+
 	// Directory scan runs in the background; the form is locked until it ends.
 	scanning bool
 	spinner  spinner.Model
 
-	// Right pane: discovered files (read-only, scrollable)
+	// Right pane: files to convert (absolute paths; read-only, scrollable)
 	files      []string
 	fileScroll scroller
 	bitrate    int // detected; 0 if unknown
@@ -95,6 +106,8 @@ const (
 	dashRemoveSourceToggle
 	dashFileList
 	dashBitrate
+	dashBookButton
+	dashStoriesButton
 	dashStartButton
 )
 
@@ -103,10 +116,17 @@ const (
 	maxBitrate = 320
 )
 
-func newDashboardModel(ctx context.Context, dir string, removeSource bool) *DashboardModel {
+// newDashboardModel opens the converter for dir, or for selection (absolute
+// mp3 paths under dir) when it is not nil.
+func newDashboardModel(ctx context.Context, dir string, selection []string, mode ConversionMode, removeSource bool) *DashboardModel {
+	if selection != nil {
+		mode = ModeStories
+	}
 	m := &DashboardModel{
 		ctx:          ctx,
 		dir:          dir,
+		selection:    selection,
+		mode:         mode,
 		removeSource: removeSource,
 		inputs:       make([]textinput.Model, 5),
 		help:         newHelpModel(),
@@ -115,15 +135,14 @@ func newDashboardModel(ctx context.Context, dir string, removeSource bool) *Dash
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 
-	placeholders := []string{"Unknown Artist", "Unknown Album", "Same as album", "Not set", "Output Filename"}
 	for i := range m.inputs {
 		t := textinput.New()
 		t.Prompt = ""
 		t.CharLimit = 128
-		t.Placeholder = placeholders[i]
 		applyInputStyles(&t)
 		m.inputs[i] = t
 	}
+	m.applyPlaceholders()
 	m.bitrateIn = textinput.New()
 	m.bitrateIn.Prompt = ""
 	m.bitrateIn.CharLimit = 3
@@ -171,9 +190,20 @@ type dirScan struct {
 type msgDirScanned struct{ scan dirScan }
 
 func scanDirectory(ctx context.Context, dir string) dirScan {
-	s := dirScan{dir: dir, files: listFilesByExt(dir, ".mp3")}
+	return scanSource(ctx, dir, nil)
+}
+
+// scanSource scans the mp3s in dir, or only selection (absolute paths) when
+// set. Folder images are offered as covers only for a whole folder.
+func scanSource(ctx context.Context, dir string, selection []string) dirScan {
+	s := dirScan{dir: dir, files: selection}
+	if selection == nil {
+		for _, name := range listFilesByExt(dir, ".mp3") {
+			s.files = append(s.files, filepath.Join(dir, name))
+		}
+	}
 	if len(s.files) > 0 {
-		if bb, err := getMetaJsonBytes(ctx, dir, s.files[0]); err == nil {
+		if bb, err := getMetaJsonBytes(ctx, "", s.files[0]); err == nil {
 			var fileMeta container
 			if err := json.Unmarshal(bb.Bytes(), &fileMeta); err == nil {
 				s.artist = fileMeta.Format.Tags.Artist
@@ -182,10 +212,13 @@ func scanDirectory(ctx context.Context, dir string) dirScan {
 				s.performer = fileMeta.Format.Tags.Performer
 			}
 		}
-		if br, err := detectBitrate(ctx, dir, nil); err == nil {
+		if br, err := detectBitrateOf(ctx, s.files); err == nil {
 			s.bitrate = br
 		}
-		s.hasEmbeddedCover = hasCoverImage(ctx, dir, s.files[0])
+		s.hasEmbeddedCover = hasCoverImage(ctx, "", s.files[0])
+	}
+	if selection != nil {
+		return s
 	}
 	dirContent, _ := os.ReadDir(dir)
 	for _, file := range dirContent {
@@ -197,12 +230,137 @@ func scanDirectory(ctx context.Context, dir string) dirScan {
 }
 
 func (m *DashboardModel) scanCmd() tea.Cmd {
-	ctx, dir := m.ctx, m.dir
-	return func() tea.Msg { return msgDirScanned{scan: scanDirectory(ctx, dir)} }
+	ctx, dir, sel := m.ctx, m.dir, m.selection
+	return func() tea.Msg { return msgDirScanned{scan: scanSource(ctx, dir, sel)} }
+}
+
+// tagPrefill is what a metadata field starts with in a mode. In stories mode
+// an empty field means "keep each file's own tag".
+func (m *DashboardModel) tagPrefill(mode ConversionMode, field int) string {
+	if mode == ModeStories {
+		return ""
+	}
+	switch field {
+	case dashInputArtist:
+		return m.scan.artist
+	case dashInputAlbum:
+		return m.scan.album
+	case dashInputPerformer:
+		return m.scan.performer
+	}
+	return ""
+}
+
+var modeTagFields = []int{dashInputArtist, dashInputAlbum, dashInputPerformer}
+
+func (m *DashboardModel) applyPlaceholders() {
+	ph := []string{"Unknown Artist", "Unknown Album", "Same as album", "Not set", "Output Filename"}
+	if m.mode == ModeStories {
+		ph = []string{"From each file", "From each file", "", "From each file", ""}
+	}
+	for i := range m.inputs {
+		m.inputs[i].Placeholder = ph[i]
+	}
+}
+
+// setMode switches between book and stories. Fields the user didn't change
+// follow the new mode's prefill; edited fields are kept.
+func (m *DashboardModel) setMode(mode ConversionMode) tea.Cmd {
+	if mode == m.mode {
+		return nil
+	}
+	if mode == ModeBook && m.selection != nil {
+		m.notice = "Selected files are always converted as separate stories."
+		return nil
+	}
+	if !m.scanning {
+		for _, f := range modeTagFields {
+			if m.inputs[f].Value() == m.tagPrefill(m.mode, f) {
+				m.inputs[f].SetValue(m.tagPrefill(mode, f))
+			}
+		}
+	}
+	m.mode = mode
+	m.applyPlaceholders()
+	if !m.scanning {
+		m.buildCovers()
+		m.updateLayout(m.width, m.height)
+	}
+	if !m.focusable(m.focusIndex) {
+		return m.moveFocus(1)
+	}
+	return nil
+}
+
+// focusable reports whether focus index i can take focus in the current mode.
+func (m *DashboardModel) focusable(i int) bool {
+	switch i {
+	case dashInputTitle, dashInputOutFilename:
+		return m.mode == ModeBook // stories take both from each file
+	case dashBookButton:
+		return m.selection == nil
+	}
+	return true
+}
+
+// buildCovers fills the cover choices for the mode, keeping the current choice if it still exists.
+func (m *DashboardModel) buildCovers() {
+	var prev coverItem
+	if c := m.coverScroll.Cursor(); c < len(m.covers) {
+		prev = m.covers[c]
+	}
+	m.covers = []coverItem{
+		{kind: CoverAuto, label: "Auto-detect"},
+		{kind: CoverDefault, label: "Default Cover"},
+	}
+	switch {
+	case m.mode == ModeStories:
+		m.covers = append(m.covers, coverItem{kind: CoverExtract, label: "Embedded in each MP3"})
+	case m.scan.hasEmbeddedCover:
+		m.covers = append(m.covers, coverItem{kind: CoverExtract, label: "Extract from MP3"})
+	}
+	for _, name := range m.scan.images {
+		m.covers = append(m.covers, coverItem{kind: CoverFile, label: name, file: name})
+	}
+	m.coverScroll.SetCount(len(m.covers))
+	m.coverScroll.Top()
+	for i, c := range m.covers {
+		if c.kind == prev.kind && c.file == prev.file {
+			m.coverScroll.Select(i)
+		}
+	}
+}
+
+// displayName is how a file to convert is listed: relative to the dashboard folder.
+func (m *DashboardModel) displayName(path string) string {
+	if rel, err := filepath.Rel(m.dir, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return path
+}
+
+// existingOutputs lists the .m4b files the conversion would overwrite.
+func (m *DashboardModel) existingOutputs() []string {
+	var outs []string
+	if m.mode == ModeBook {
+		outs = []string{filepath.Join(m.dir, m.getConfig().OutFilename)}
+	} else {
+		for _, f := range m.files {
+			outs = append(outs, storyOutputPath(f))
+		}
+	}
+	var existing []string
+	for _, o := range outs {
+		if _, err := os.Stat(o); err == nil {
+			existing = append(existing, o)
+		}
+	}
+	return existing
 }
 
 func (m *DashboardModel) applyScan(s dirScan) {
 	m.scanning = false
+	m.scan = s
 	m.files = s.files
 	m.bitrate = s.bitrate
 	m.fileScroll.SetCount(len(m.files))
@@ -214,10 +372,10 @@ func (m *DashboardModel) applyScan(s dirScan) {
 	if len(m.files) > 0 {
 		// Missing tags stay empty and show a placeholder, so "Unknown ..."
 		// isn't written into the book's tags.
-		m.inputs[dashInputArtist].SetValue(s.artist)
-		m.inputs[dashInputAlbum].SetValue(s.album)
+		for _, f := range modeTagFields {
+			m.inputs[f].SetValue(m.tagPrefill(m.mode, f))
+		}
 		m.inputs[dashInputTitle].SetValue(s.title)
-		m.inputs[dashInputPerformer].SetValue(s.performer)
 
 		var outName string
 		if s.artist != "" && s.album != "" {
@@ -230,18 +388,7 @@ func (m *DashboardModel) applyScan(s dirScan) {
 		m.inputs[dashInputOutFilename].SetValue(strings.ReplaceAll(outName, string(filepath.Separator), "_"))
 	}
 
-	m.covers = []coverItem{
-		{kind: CoverAuto, label: "Auto-detect"},
-		{kind: CoverDefault, label: "Default Cover"},
-	}
-	if s.hasEmbeddedCover {
-		m.covers = append(m.covers, coverItem{kind: CoverExtract, label: "Extract from MP3"})
-	}
-	for _, name := range s.images {
-		m.covers = append(m.covers, coverItem{kind: CoverFile, label: name, file: name})
-	}
-	m.coverScroll.SetCount(len(m.covers))
-	m.coverScroll.Top()
+	m.buildCovers()
 	m.updateLayout(m.width, m.height)
 }
 
@@ -283,6 +430,8 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 		CoverPath:    coverPath,
 		RemoveSource: m.removeSource,
 		BitRate:      m.chosenBitrate(),
+		Mode:         m.mode,
+		Files:        m.files,
 	}
 }
 
@@ -298,7 +447,7 @@ func (m *DashboardModel) chosenBitrate() int {
 // validate returns why the conversion can't start, or "".
 func (m *DashboardModel) validate() string {
 	if len(m.files) == 0 {
-		return "Nothing to convert: this folder has no MP3 files. Press esc to pick another folder."
+		return "Nothing to convert: no MP3 files here. Press esc to pick another folder."
 	}
 	if m.chosenBitrate() == 0 {
 		return fmt.Sprintf("Enter a bitrate between %d and %d kbps.", minBitrate, maxBitrate)
@@ -464,13 +613,19 @@ func (m *DashboardModel) Update(msg tea.Msg) tea.Cmd {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return cmd
 	case tea.KeyMsg:
+		m.notice = ""
+		switch {
+		case key.Matches(msg, dashKeys.Book) && !m.showConfirm:
+			return m.setMode(ModeBook)
+		case key.Matches(msg, dashKeys.Stories) && !m.showConfirm:
+			return m.setMode(ModeStories)
+		}
 		if m.scanning {
 			if key.Matches(msg, dashKeys.Back) {
 				return func() tea.Msg { return msgSwitchToFileManager{} }
 			}
 			return nil
 		}
-		m.notice = ""
 		if m.showConfirm {
 			switch {
 			case key.Matches(msg, confirmKeys.Yes):
@@ -498,8 +653,21 @@ func (m *DashboardModel) Update(msg tea.Msg) tea.Cmd {
 		case key.Matches(msg, dashKeys.Next):
 			return m.moveFocus(1)
 		case key.Matches(msg, dashKeys.Confirm):
-			// Enter advances through the form; only the Start button starts the job.
-			if m.focusIndex != dashStartButton {
+			// Enter advances through the form, picks a mode on the mode
+			// buttons, and only the Start button starts the job.
+			switch m.focusIndex {
+			case dashBookButton, dashStoriesButton:
+				// Pick the mode, then go to Start.
+				mode := ModeBook
+				if m.focusIndex == dashStoriesButton {
+					mode = ModeStories
+				}
+				if mode == ModeBook && m.selection != nil {
+					return m.setMode(mode) // explains why not
+				}
+				return tea.Batch(m.setMode(mode), m.focusOn(dashStartButton))
+			case dashStartButton:
+			default:
 				return m.moveFocus(1)
 			}
 			if problem := m.validate(); problem != "" {
@@ -509,7 +677,7 @@ func (m *DashboardModel) Update(msg tea.Msg) tea.Cmd {
 				}
 				return nil
 			}
-			if _, err := os.Stat(filepath.Join(m.dir, m.getConfig().OutFilename)); err == nil {
+			if len(m.existingOutputs()) > 0 {
 				m.showConfirm = true
 				return nil
 			}
@@ -536,9 +704,18 @@ func (m *DashboardModel) listScroll() *scroller {
 	return &m.fileScroll
 }
 
-// moveFocus moves focus by delta, wrapping around.
+// moveFocus moves focus by delta, wrapping around and skipping what the
+// current mode disables.
 func (m *DashboardModel) moveFocus(delta int) tea.Cmd {
-	return m.focusOn((m.focusIndex + delta + dashStartButton + 1) % (dashStartButton + 1))
+	n := dashStartButton + 1
+	i := m.focusIndex
+	for k := 0; k < n; k++ {
+		i = (i + delta + n) % n
+		if m.focusable(i) {
+			break
+		}
+	}
+	return m.focusOn(i)
 }
 
 func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
@@ -562,7 +739,7 @@ func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 // focus. Essentials come first; help truncates from the end on narrow terminals.
 func (m *DashboardModel) ShortHelp() []key.Binding {
 	if m.scanning {
-		return append([]key.Binding{dashKeys.Back}, globalHelp(false)...)
+		return append([]key.Binding{dashKeys.Back, dashKeys.Book}, globalHelp(false)...)
 	}
 	editing := m.IsEditingText()
 	var b []key.Binding
@@ -577,12 +754,15 @@ func (m *DashboardModel) ShortHelp() []key.Binding {
 		b = append(b, dashKeys.Toggle)
 	}
 	confirm := dashKeys.Confirm
-	if m.focusIndex == dashStartButton {
+	switch m.focusIndex {
+	case dashStartButton:
 		confirm.SetHelp("enter", "start")
+	case dashBookButton, dashStoriesButton:
+		confirm.SetHelp("enter", "select")
 	}
 	b = append(b, confirm, dashKeys.Next, dashKeys.Back)
 	global := globalHelp(editing)
-	b = append(b, global[0], global[1]) // quit / ctrl+c quit
+	b = append(b, global[0], global[1], dashKeys.Book) // quit / ctrl+c quit, then mode
 	cover := dashKeys.SwitchCover
 	cover.SetEnabled(!editing && m.focusIndex != dashCoverSelection)
 	return append(b, cover, global[2]) // theme last
@@ -599,21 +779,28 @@ func (m *DashboardModel) View() string {
 	}
 
 	if m.showConfirm {
+		existing := m.existingOutputs()
+		var msg []string
+		if len(existing) == 1 {
+			msg = []string{fmt.Sprintf("%q already exists.", m.displayName(existing[0])), "Overwrite it? (y/N)"}
+		} else {
+			msg = []string{fmt.Sprintf("%d of the .m4b files already exist.", len(existing)), "Overwrite them? (y/N)"}
+		}
 		dialogBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(errorColor).
 			Padding(1, 2).
-			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Output File Exists"),
-				"",
-				fmt.Sprintf("%q already exists in this directory.", m.getConfig().OutFilename),
-				"Overwrite it? (y/N)",
-			))
+			MaxWidth(m.width).
+			Render(lipgloss.JoinVertical(lipgloss.Center, append([]string{
+				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Output File Exists"), ""},
+				msg...)...))
 
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
 	}
 
 	lay := m.layout
+	stories := m.mode == ModeStories
+	dim := lipgloss.NewStyle().Foreground(subtextColor)
 	// Every pane row is truncated (not wrapped) and padded to the content width.
 	padStyle := lipgloss.NewStyle().Width(lay.contentWidth)
 	row := func(s string) string { return padStyle.Render(truncateText(s, lay.contentWidth)) }
@@ -654,10 +841,18 @@ func (m *DashboardModel) View() string {
 	labels := []string{"Artist:    ", "Album:     ", "Title:     ", "Performer: "}
 	var meta []string
 	for i := dashInputArtist; i <= dashInputPerformer; i++ {
-		meta = append(meta, focusPrefix(i)+labels[i]+m.inputs[i].View())
+		field := m.inputs[i].View()
+		if !m.focusable(i) {
+			field = dim.Render("From each file")
+		}
+		meta = append(meta, focusPrefix(i)+labels[i]+field)
 	}
 	section("METADATA", meta...)
-	section("OUTPUT M4B FILE", focusPrefix(dashInputOutFilename)+m.inputs[dashInputOutFilename].View())
+	if stories {
+		section("OUTPUT M4B FILES", "  "+dim.Render("<name>.m4b next to each MP3"))
+	} else {
+		section("OUTPUT M4B FILE", focusPrefix(dashInputOutFilename)+m.inputs[dashInputOutFilename].View())
+	}
 	section("COVER ART SOURCE", m.coverRows()...)
 	box := "[ ]"
 	if m.removeSource {
@@ -671,8 +866,15 @@ func (m *DashboardModel) View() string {
 	leftActive := m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle
 	leftStr := paneStyle(leftActive).Render(lipgloss.JoinVertical(lipgloss.Left, left...))
 
-	// Right: discovered files
-	right := []string{title("DISCOVERED MP3 FILES")}
+	// Right: files to convert
+	filesTitle := "DISCOVERED MP3 FILES"
+	if m.selection != nil {
+		filesTitle = "SELECTED MP3 FILES"
+	}
+	if len(m.files) > 0 {
+		filesTitle += fmt.Sprintf(" (%d)", len(m.files))
+	}
+	right := []string{title(filesTitle)}
 	if lay.density < 2 {
 		right = append(right, "")
 	}
@@ -691,8 +893,7 @@ func (m *DashboardModel) View() string {
 	case m.bitrate > 0:
 		detected = fmt.Sprintf("detected %d", m.bitrate)
 	}
-	right = append(right, focusPrefix(dashBitrate)+"Bitrate: "+m.bitrateIn.View()+"kbps  "+
-		lipgloss.NewStyle().Foreground(subtextColor).Render(detected))
+	right = append(right, focusPrefix(dashBitrate)+"Bitrate: "+m.bitrateIn.View()+"kbps  "+dim.Render(detected))
 	for i, l := range right {
 		right[i] = row(l)
 	}
@@ -700,28 +901,33 @@ func (m *DashboardModel) View() string {
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, strings.Repeat(" ", layoutPaneGap), rightStr)
 
-	// Start button
-	btnText := "START CONVERSION (Enter)"
-	if len(m.files) == 0 {
-		btnText = "NO MP3 FILES TO CONVERT"
+	// Buttons: mode (book / stories) and start.
+	startText := "START CONVERSION (Enter)"
+	switch {
+	case len(m.files) == 0:
+		startText = "NO MP3 FILES TO CONVERT"
+	case stories:
+		startText = fmt.Sprintf("CONVERT %d STORIES (Enter)", len(m.files))
+		if len(m.files) == 1 {
+			startText = "CONVERT 1 STORY (Enter)"
+		}
 	}
-	if m.focusIndex == dashStartButton {
-		btnText = "> " + btnText + " <"
+	// Shorter labels when the full ones don't fit the width.
+	var buttons string
+	for _, l := range [][3]string{{"BOOK ^B", "STORIES ^S", startText}, {"BOOK", "STORIES", "START"}} {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Center,
+			m.button(dashBookButton, l[0], !stories, m.selection == nil),
+			" ",
+			m.button(dashStoriesButton, l[1], stories, true),
+			"   ",
+			m.button(dashStartButton, l[2], true, len(m.files) > 0),
+		)
+		if lipgloss.Width(buttons) <= lipgloss.Width(split) {
+			break
+		}
 	}
-	innerBtnStyle := lipgloss.NewStyle().Padding(0, 2)
-	if len(m.files) > 0 {
-		innerBtnStyle = innerBtnStyle.Background(primaryColor).Foreground(onPrimaryColor).Bold(true)
-	} else {
-		innerBtnStyle = innerBtnStyle.Background(secondaryColor).Foreground(textColor)
-	}
-	startBtn := innerBtnStyle.Render(btnText)
 	btnBlock := lipgloss.NewStyle().Width(lipgloss.Width(split)).Align(lipgloss.Center)
 	if !lay.compactButton {
-		frameStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(secondaryColor)
-		if m.focusIndex == dashStartButton && len(m.files) > 0 {
-			frameStyle = frameStyle.BorderForeground(primaryColor)
-		}
-		startBtn = frameStyle.Render(startBtn)
 		btnBlock = btnBlock.Margin(1, 0)
 	}
 
@@ -729,7 +935,7 @@ func (m *DashboardModel) View() string {
 	if m.notice != "" {
 		notice = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
 	}
-	parts := []string{split, btnBlock.Render(startBtn)}
+	parts := []string{split, btnBlock.Render(buttons)}
 	switch {
 	case !lay.compactButton:
 		parts = append(parts, notice, m.help.View(m))
@@ -739,6 +945,33 @@ func (m *DashboardModel) View() string {
 		parts = append(parts, m.help.View(m))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// button renders one of the bottom buttons. on means filled (the chosen mode,
+// or an enabled Start); focus adds "> <" and a highlighted frame.
+func (m *DashboardModel) button(idx int, text string, on, enabled bool) string {
+	focused := m.focusIndex == idx
+	if focused {
+		text = "> " + text + " <"
+	}
+	style := lipgloss.NewStyle().Padding(0, 2)
+	switch {
+	case !enabled:
+		style = style.Background(secondaryColor).Foreground(subtextColor)
+	case on:
+		style = style.Background(primaryColor).Foreground(onPrimaryColor).Bold(true)
+	default:
+		style = style.Background(secondaryColor).Foreground(textColor)
+	}
+	out := style.Render(text)
+	if !m.layout.compactButton {
+		frame := secondaryColor
+		if focused && enabled {
+			frame = primaryColor
+		}
+		out = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(frame).Render(out)
+	}
+	return out
 }
 
 func (m *DashboardModel) fileRows() []string {
@@ -752,7 +985,7 @@ func (m *DashboardModel) fileRows() []string {
 				prefix = lipgloss.NewStyle().Foreground(primaryColor).Render(prefix)
 			}
 		}
-		rows = append(rows, prefix+truncateText(m.files[i], m.layout.contentWidth-2))
+		rows = append(rows, prefix+truncateText(m.displayName(m.files[i]), m.layout.contentWidth-2))
 	}
 	return rows
 }
