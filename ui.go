@@ -5,22 +5,49 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Global keys, handled by UI before the active screen sees the key.
 var uiKeys = struct {
-	Quit  key.Binding
-	Theme key.Binding
+	Quit      key.Binding
+	ForceQuit key.Binding
+	Theme     key.Binding
 }{
 	Quit: key.NewBinding(
-		key.WithKeys("ctrl+c", "q"),
+		key.WithKeys("q"),
 		key.WithHelp("q", "quit"),
+	),
+	ForceQuit: key.NewBinding(
+		key.WithKeys("ctrl+c"),
+		key.WithHelp("ctrl+c", "quit"),
 	),
 	Theme: key.NewBinding(
 		key.WithKeys("t", "T"),
 		key.WithHelp("t", "theme"),
 	),
+}
+
+// Keys for (y/N) dialogs. Enter means No, as the capital N promises.
+var confirmKeys = struct {
+	Yes key.Binding
+	No  key.Binding
+}{
+	Yes: key.NewBinding(key.WithKeys("y", "Y")),
+	No:  key.NewBinding(key.WithKeys("n", "N", "esc", "enter")),
+}
+
+// globalHelp returns the global bindings for a screen's help bar. While a
+// text field captures keys, q and t are typed instead, so only ctrl+c is shown.
+func globalHelp(capturing bool) []key.Binding {
+	quit, force, theme := uiKeys.Quit, uiKeys.ForceQuit, uiKeys.Theme
+	quit.SetEnabled(!capturing)
+	theme.SetEnabled(!capturing)
+	force.SetEnabled(capturing)
+	return []key.Binding{quit, force, theme}
 }
 
 type state int
@@ -31,7 +58,8 @@ const (
 	stateProgress
 )
 
-// UI is the top-level application model
+// UI is the top-level application model. Screens are plain structs with
+// Init/Update/View/SetSize; only UI implements tea.Model.
 type UI struct {
 	ctx         context.Context
 	state       state
@@ -40,12 +68,7 @@ type UI struct {
 	dashboard   *DashboardModel
 	progress    *ProgressModel
 
-	// Error handling
-	err error
-
-	// Completion state
-	done bool
-
+	err             error // fatal error, shown as a dialog
 	showQuitConfirm bool
 
 	width  int
@@ -62,34 +85,30 @@ func newUI(ctx context.Context, initialState state, initialDir string, args Argu
 		args:  args,
 	}
 
-	// Initialize submodels
-	if initialState == stateFileManager {
+	switch initialState {
+	case stateFileManager:
 		m.fileManager = newFileManagerModel(initialDir)
-	} else if initialState == stateDashboard || initialState == stateProgress {
+	case stateDashboard, stateProgress:
 		m.dashboard = newDashboardModel(ctx, initialDir, args.RemoveSource)
 		if initialState == stateProgress {
-			// No form to show: scan synchronously so the config has tags and bitrate.
+			// No form to show (gogogo): scan synchronously so the config has tags and bitrate.
 			m.dashboard.applyScan(scanDirectory(ctx, initialDir))
-			// Fast forward to progress directly (gogogo)
 			m.progress = newProgressModel(ctx, initialDir, m.dashboard.getConfig())
 		}
 	}
-
 	return m
 }
 
 func (m *UI) Init() tea.Cmd {
-	var cmds []tea.Cmd
-	if m.fileManager != nil && m.state == stateFileManager {
-		cmds = append(cmds, m.fileManager.Init())
+	switch m.state {
+	case stateFileManager:
+		return m.fileManager.Init()
+	case stateDashboard:
+		return m.dashboard.Init()
+	case stateProgress:
+		return m.progress.Init()
 	}
-	if m.dashboard != nil && m.state == stateDashboard {
-		cmds = append(cmds, m.dashboard.Init())
-	}
-	if m.progress != nil && m.state == stateProgress {
-		cmds = append(cmds, m.progress.Init())
-	}
-	return tea.Batch(cmds...)
+	return nil
 }
 
 // Custom messages to trigger state transitions
@@ -124,23 +143,45 @@ type msgError struct {
 
 type msgCancelled struct{}
 
-func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
+// capturingInput reports whether the active screen is typing text, in which
+// case single-letter global shortcuts (q, t) must reach the screen.
+func (m *UI) capturingInput() bool {
+	switch m.state {
+	case stateDashboard:
+		return m.dashboard != nil && m.dashboard.IsEditingText()
+	case stateFileManager:
+		return m.fileManager != nil && m.fileManager.IsFiltering()
+	}
+	return false
+}
 
+func (m *UI) runFinished() bool {
+	return m.progress == nil || m.progress.Finished()
+}
+
+func (m *UI) quit() (tea.Model, tea.Cmd) {
+	if m.state == stateProgress && !m.runFinished() {
+		m.showQuitConfirm = true
+		return m, nil
+	}
+	return m, tea.Quit
+}
+
+func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		return m, m.resizeChildren()
+		m.resizeChildren()
+		return m, nil
 
 	case tea.KeyMsg:
 		if m.showQuitConfirm {
-			if msg.String() == "y" || msg.String() == "Y" {
+			switch {
+			case key.Matches(msg, confirmKeys.Yes):
 				return m, tea.Quit
-			} else if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" || msg.String() == "enter" {
+			case key.Matches(msg, confirmKeys.No):
 				m.showQuitConfirm = false
-				return m, nil
 			}
 			return m, nil
 		}
@@ -149,30 +190,18 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		if msg.String() == "t" || msg.String() == "T" {
-			editingText := (m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText())
-			settingFilter := (m.state == stateFileManager && m.fileManager != nil && m.fileManager.list.SettingFilter())
-
-			if !editingText && !settingFilter {
-				m.toggleTheme()
-				return m, nil
-			}
-		}
-
-		if msg.String() == "esc" && m.state == stateProgress && m.done {
+		capturing := m.capturingInput()
+		switch {
+		case key.Matches(msg, uiKeys.ForceQuit):
+			return m.quit()
+		case key.Matches(msg, uiKeys.Quit) && !capturing:
+			return m.quit()
+		case key.Matches(msg, uiKeys.Theme) && !capturing:
+			return m, m.toggleTheme()
+		case key.Matches(msg, progKeys.Back) && m.state == stateProgress && m.runFinished():
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		}
 
-		if key.Matches(msg, uiKeys.Quit) {
-			if msg.String() == "q" && m.state == stateDashboard && m.dashboard != nil && m.dashboard.IsEditingText() {
-				// Let the dashboard text inputs handle the "q" keystroke
-			} else if m.state == stateProgress && !m.done {
-				m.showQuitConfirm = true
-				return m, nil
-			} else {
-				return m, tea.Quit
-			}
-		}
 	case msgError:
 		if m.state != stateProgress || m.progress == nil {
 			m.err = msg.err
@@ -180,7 +209,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A failed conversion ends the run; the progress screen shows the
 		// failure and the user can still read the logs, go back or quit.
-		m.done = true
+
 	case error:
 		m.err = msg
 		return m, nil
@@ -189,7 +218,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateDashboard
 		m.dir = msg.dir
 		m.dashboard = newDashboardModel(m.ctx, msg.dir, m.args.RemoveSource)
-		return m, tea.Batch(m.resizeChildren(), m.dashboard.Init())
+		m.resizeChildren()
+		return m, m.dashboard.Init()
 
 	case msgSwitchToFileManager:
 		if m.state == stateProgress && m.progress != nil {
@@ -203,46 +233,35 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fileManager.reload()
 		}
 		m.dir = m.fileManager.dir
-		return m, tea.Batch(m.resizeChildren(), m.fileManager.Init())
+		m.resizeChildren()
+		return m, m.fileManager.Init()
 
 	case msgStartConversion:
 		m.state = stateProgress
 		m.dir = msg.config.TargetDir
-		m.done = false
 		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
-		return m, tea.Batch(m.resizeChildren(), m.progress.Init())
-
-	case msgConversionDone:
-		m.done = true
-
-	case msgCancelled:
-		m.done = true
+		m.resizeChildren()
+		return m, m.progress.Init()
 	}
 
-	// Dispatch to active sub-model
+	// Dispatch to the active screen
+	var cmd tea.Cmd
 	switch m.state {
 	case stateFileManager:
 		if m.fileManager != nil {
-			newModel, newCmd := m.fileManager.Update(msg)
-			m.fileManager = newModel.(*FileManagerModel)
+			cmd = m.fileManager.Update(msg)
 			m.dir = m.fileManager.dir
-			cmds = append(cmds, newCmd)
 		}
 	case stateDashboard:
 		if m.dashboard != nil {
-			newModel, newCmd := m.dashboard.Update(msg)
-			m.dashboard = newModel.(*DashboardModel)
-			cmds = append(cmds, newCmd)
+			cmd = m.dashboard.Update(msg)
 		}
 	case stateProgress:
 		if m.progress != nil {
-			newModel, newCmd := m.progress.Update(msg)
-			m.progress = newModel.(*ProgressModel)
-			cmds = append(cmds, newCmd)
+			cmd = m.progress.Update(msg)
 		}
 	}
-
-	return m, tea.Batch(cmds...)
+	return m, cmd
 }
 
 func (m *UI) headerView() string {
@@ -267,10 +286,7 @@ func (m *UI) headerView() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor)
 	// Width includes padding but not the border.
-	inner := m.width - docStyle.GetHorizontalFrameSize() - style.GetHorizontalBorderSize()
-	if inner < 0 {
-		inner = 0
-	}
+	inner := max(0, m.width-docStyle.GetHorizontalFrameSize()-style.GetHorizontalBorderSize())
 	// Keep the header on one line so the chrome height stays fixed.
 	return style.Width(inner).Render(truncateText(titleText, inner-style.GetHorizontalPadding()))
 }
@@ -295,27 +311,21 @@ func (m *UI) contentSize() (int, int) {
 	return max(0, m.width-hf), max(0, m.height-vf-lipgloss.Height(m.chromeView()))
 }
 
-// resizeChildren tells every screen the size of its content area.
-func (m *UI) resizeChildren() tea.Cmd {
+// resizeChildren gives every screen the size of its content area.
+func (m *UI) resizeChildren() {
 	if m.width == 0 || m.height == 0 {
-		return nil
+		return
 	}
 	w, h := m.contentSize()
-	msg := tea.WindowSizeMsg{Width: w, Height: h}
-	var cmds []tea.Cmd
 	if m.fileManager != nil {
-		_, cmd := m.fileManager.Update(msg)
-		cmds = append(cmds, cmd)
+		m.fileManager.SetSize(w, h)
 	}
 	if m.dashboard != nil {
-		_, cmd := m.dashboard.Update(msg)
-		cmds = append(cmds, cmd)
+		m.dashboard.SetSize(w, h)
 	}
 	if m.progress != nil {
-		_, cmd := m.progress.Update(msg)
-		cmds = append(cmds, cmd)
+		m.progress.SetSize(w, h)
 	}
-	return tea.Batch(cmds...)
 }
 
 func (m *UI) View() string {
@@ -357,8 +367,6 @@ func (m *UI) View() string {
 		return docStyle.Render("Unknown state")
 	}
 
-	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, m.chromeView(), baseView))
-
 	if m.showQuitConfirm {
 		dialogBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -370,11 +378,10 @@ func (m *UI) View() string {
 				"Conversion is currently running.",
 				"Are you sure you want to quit? (y/N)",
 			))
-
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
 	}
 
-	return fullView
+	return docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, m.chromeView(), baseView))
 }
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2, 0, 2)
@@ -387,7 +394,6 @@ const (
 )
 
 type Theme struct {
-	IsDark     bool
 	Primary    lipgloss.Color
 	Secondary  lipgloss.Color
 	Text       lipgloss.Color
@@ -397,13 +403,14 @@ type Theme struct {
 	Warning    lipgloss.Color
 	DirBadgeBg lipgloss.Color
 	DirBadgeFg lipgloss.Color
+	GradientA  string // progress bar gradient
+	GradientB  string
 }
 
 var (
 	currentThemeKind = ThemeDark
 
 	DarkTheme = Theme{
-		IsDark:     true,
 		Primary:    lipgloss.Color("#00ADB5"),
 		Secondary:  lipgloss.Color("#393E46"),
 		Text:       lipgloss.Color("#EEEEEE"),
@@ -413,10 +420,11 @@ var (
 		Warning:    lipgloss.Color("#FFB800"),
 		DirBadgeBg: lipgloss.Color("#00ADB5"),
 		DirBadgeFg: lipgloss.Color("#1A1A1A"),
+		GradientA:  "#5A56E0", // bubbles' default gradient
+		GradientB:  "#EE6FF8",
 	}
 
 	LightTheme = Theme{
-		IsDark:     false,
 		Primary:    lipgloss.Color("#005F73"),
 		Secondary:  lipgloss.Color("#CBD5E1"),
 		Text:       lipgloss.Color("#0F172A"),
@@ -426,8 +434,11 @@ var (
 		Warning:    lipgloss.Color("#D97706"),
 		DirBadgeBg: lipgloss.Color("#005F73"),
 		DirBadgeFg: lipgloss.Color("#FFFFFF"),
+		GradientA:  "#4338CA",
+		GradientB:  "#DB2777",
 	}
 
+	currentTheme   Theme
 	primaryColor   lipgloss.Color
 	secondaryColor lipgloss.Color
 	textColor      lipgloss.Color
@@ -445,6 +456,7 @@ func applyTheme(kind ThemeKind) {
 	if kind == ThemeLight {
 		t = LightTheme
 	}
+	currentTheme = t
 	primaryColor = t.Primary
 	secondaryColor = t.Secondary
 	textColor = t.Text
@@ -460,16 +472,20 @@ func init() {
 	applyTheme(ThemeDark)
 }
 
-func (m *UI) toggleTheme() {
+// detectTheme picks the initial theme from the terminal background. It
+// queries the terminal, so it must run before the Bubble Tea program starts.
+func detectTheme() {
+	if !lipgloss.HasDarkBackground() {
+		applyTheme(ThemeLight)
+	}
+}
+
+func (m *UI) toggleTheme() tea.Cmd {
 	if currentThemeKind == ThemeDark {
 		applyTheme(ThemeLight)
 	} else {
 		applyTheme(ThemeDark)
 	}
-	m.updateAllThemeStyles()
-}
-
-func (m *UI) updateAllThemeStyles() {
 	if m.fileManager != nil {
 		m.fileManager.updateThemeStyles()
 	}
@@ -477,8 +493,9 @@ func (m *UI) updateAllThemeStyles() {
 		m.dashboard.updateThemeStyles()
 	}
 	if m.progress != nil {
-		m.progress.updateThemeStyles()
+		return m.progress.updateThemeStyles()
 	}
+	return nil
 }
 
 func helpStyle() lipgloss.Style {
@@ -498,4 +515,21 @@ func applyHelpStyles(s *help.Styles) {
 	s.FullKey = lipgloss.NewStyle().Foreground(primaryColor)
 	s.FullDesc = lipgloss.NewStyle().Foreground(subtextColor)
 	s.FullSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
+	s.Ellipsis = lipgloss.NewStyle().Foreground(secondaryColor)
+}
+
+// applyInputStyles themes a textinput; its default placeholder colour is a
+// fixed grey that ignores the theme.
+func applyInputStyles(t *textinput.Model) {
+	t.Cursor.Style = lipgloss.NewStyle().Foreground(primaryColor)
+	t.PromptStyle = lipgloss.NewStyle().Foreground(primaryColor)
+	t.PlaceholderStyle = lipgloss.NewStyle().Foreground(subtextColor)
+}
+
+func newProgressBar() progress.Model {
+	// The percentage is part of the status label, so the bar doesn't print its own.
+	return progress.New(
+		progress.WithGradient(currentTheme.GradientA, currentTheme.GradientB),
+		progress.WithoutPercentage(),
+	)
 }

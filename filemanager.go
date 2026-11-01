@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 )
 
 type item struct {
@@ -18,86 +20,91 @@ type item struct {
 	hasM4B bool
 }
 
-func (i item) Title() string {
-	if i.isDir {
-		return "📁 " + i.name
-	}
-	return "📄 " + i.name
-}
-func (i item) Description() string {
-	if i.name == ".." {
-		return "Parent Directory"
-	}
-	if i.isDir {
-		return "Directory"
-	}
-	return "File"
-}
-func (i item) FilterValue() string { return i.name }
-
 var fmKeys = struct {
-	Open  key.Binding
-	Back  key.Binding
-	Dir   key.Binding
-	Theme key.Binding
-	Quit  key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	PageUp       key.Binding
+	PageDown     key.Binding
+	Top          key.Binding
+	Bottom       key.Binding
+	Open         key.Binding
+	Back         key.Binding
+	Dir          key.Binding
+	Filter       key.Binding
+	ClearFilter  key.Binding
+	AcceptFilter key.Binding
+	CancelFilter key.Binding
 }{
-	Open: key.NewBinding(
-		key.WithKeys("enter", "o", " "),
-		key.WithHelp("space/enter", "open"),
-	),
-	Back: key.NewBinding(
-		key.WithKeys("left", "h"),
-		key.WithHelp("←/h", "back"),
-	),
-	Dir: key.NewBinding(
-		key.WithKeys("right", "l"),
-		key.WithHelp("→/l", "enter dir"),
-	),
-	Theme: key.NewBinding(
-		key.WithKeys("t", "T"),
-		key.WithHelp("t", "theme"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q"),
-		key.WithHelp("q", "quit"),
-	),
+	Up:           key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/↓", "move")),
+	Down:         key.NewBinding(key.WithKeys("down", "j")),
+	PageUp:       key.NewBinding(key.WithKeys("pgup", "b", "u")),
+	PageDown:     key.NewBinding(key.WithKeys("pgdown", "f", "d")),
+	Top:          key.NewBinding(key.WithKeys("home", "g")),
+	Bottom:       key.NewBinding(key.WithKeys("end", "G")),
+	Open:         key.NewBinding(key.WithKeys("enter", "o", " "), key.WithHelp("enter", "open")),
+	Back:         key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "parent")),
+	Dir:          key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→", "into")),
+	Filter:       key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+	ClearFilter:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear filter")),
+	AcceptFilter: key.NewBinding(key.WithKeys("enter", "tab", "up", "down"), key.WithHelp("enter", "apply filter")),
+	CancelFilter: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 }
 
+type filterState int
+
+const (
+	unfiltered filterState = iota
+	filtering
+	filterApplied
+)
+
+// FileManagerModel is a directory browser. It renders and scrolls its own rows
+// rather than wrapping bubbles' list, whose paginator would disagree with the
+// custom rendering about how many rows a page has.
 type FileManagerModel struct {
-	dir       string
-	list      list.Model
-	topOffset int
-}
+	dir     string
+	items   []item
+	visible []int // indexes into items, in filter rank order
+	scroll  scroller
 
-func (m *FileManagerModel) updateThemeStyles() {
-	applyHelpStyles(&m.list.Help.Styles)
+	filter      textinput.Model
+	filterState filterState
+
+	help   help.Model
+	width  int
+	height int
 }
 
 func newFileManagerModel(dir string) *FileManagerModel {
-	m := &FileManagerModel{
-		dir: dir,
-	}
-
-	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = false
-	delegate.SetSpacing(0)
-
-	m.list = list.New([]list.Item{}, delegate, 80, 25)
-	m.list.SetShowStatusBar(false)
-	m.list.SetShowPagination(false)
-	m.list.SetFilteringEnabled(true)
-	m.list.SetShowTitle(false)
-	m.list.KeyMap.Quit = key.NewBinding()
-	applyHelpStyles(&m.list.Help.Styles)
-
-	m.list.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{fmKeys.Open, fmKeys.Back, fmKeys.Theme, fmKeys.Quit}
-	}
-	m.list.AdditionalFullHelpKeys = m.list.AdditionalShortHelpKeys
-
+	m := &FileManagerModel{help: newHelpModel()}
+	m.filter = textinput.New()
+	m.filter.Prompt = "Filter: "
+	applyInputStyles(&m.filter)
 	m.loadDir(dir)
 	return m
+}
+
+func (m *FileManagerModel) updateThemeStyles() {
+	applyHelpStyles(&m.help.Styles)
+	applyInputStyles(&m.filter)
+}
+
+func (m *FileManagerModel) IsFiltering() bool { return m.filterState == filtering }
+
+func (m *FileManagerModel) SetSize(w, h int) {
+	m.width, m.height = w, h
+	m.help.Width = w
+	m.scroll.SetRows(m.listRows())
+}
+
+// listRows is the number of entry rows that fit: everything except the
+// filter line (+ blank) and the blank line + help bar.
+func (m *FileManagerModel) listRows() int {
+	rows := m.height - 2
+	if m.filterState != unfiltered {
+		rows -= 2
+	}
+	return max(1, rows)
 }
 
 func dirHasM4B(dirPath string) bool {
@@ -107,44 +114,35 @@ func dirHasM4B(dirPath string) bool {
 func (m *FileManagerModel) loadDir(dir string) {
 	m.dir = filepath.Clean(dir)
 	entries, err := os.ReadDir(m.dir)
-	var items []list.Item
-
-	// List title is managed by the main UI
+	m.items = nil
 
 	// Add parent if not at root
 	if parentDir := filepath.Dir(m.dir); parentDir != m.dir {
-		items = append(items, item{name: "..", isDir: true})
+		m.items = append(m.items, item{name: "..", isDir: true})
 	}
 
 	if err == nil {
 		for _, e := range entries {
-			// skip hidden files
-			if !strings.HasPrefix(e.Name(), ".") {
-				isDir := e.IsDir()
-				isM4B := !isDir && strings.HasSuffix(strings.ToLower(e.Name()), ".m4b")
-				hasM4B := false
-				if isDir {
-					hasM4B = dirHasM4B(filepath.Join(m.dir, e.Name()))
-				}
-				items = append(items, item{
-					name:   e.Name(),
-					isDir:  isDir,
-					isM4B:  isM4B,
-					hasM4B: hasM4B,
-				})
+			if strings.HasPrefix(e.Name(), ".") { // skip hidden files
+				continue
 			}
+			isDir := e.IsDir()
+			m.items = append(m.items, item{
+				name:   e.Name(),
+				isDir:  isDir,
+				isM4B:  !isDir && strings.HasSuffix(strings.ToLower(e.Name()), ".m4b"),
+				hasM4B: isDir && dirHasM4B(filepath.Join(m.dir, e.Name())),
+			})
 		}
 	}
-	m.list.SetItems(items)
-	m.list.ResetSelected()
-	m.topOffset = 0
+	m.clearFilter()
 }
 
 func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
 	m.loadDir(dir)
-	for i, it := range m.list.Items() {
-		if it.(item).name == childName {
-			m.list.Select(i)
+	for vi, idx := range m.visible {
+		if m.items[idx].name == childName {
+			m.scroll.Select(vi)
 			break
 		}
 	}
@@ -153,138 +151,185 @@ func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
 // reload re-reads the current directory and keeps the selected entry.
 func (m *FileManagerModel) reload() {
 	var name string
-	if it, ok := m.list.SelectedItem().(item); ok {
+	if it, ok := m.selected(); ok {
 		name = it.name
 	}
 	m.loadDirAndSelectChild(m.dir, name)
+}
+
+func (m *FileManagerModel) selected() (item, bool) {
+	c := m.scroll.Cursor()
+	if c < 0 || c >= len(m.visible) {
+		return item{}, false
+	}
+	return m.items[m.visible[c]], true
+}
+
+// applyFilter recomputes visible entries (fuzzy match, best first).
+func (m *FileManagerModel) applyFilter() {
+	m.visible = m.visible[:0]
+	term := m.filter.Value()
+	if term == "" {
+		for i := range m.items {
+			m.visible = append(m.visible, i)
+		}
+	} else {
+		names := make([]string, len(m.items))
+		for i, it := range m.items {
+			names[i] = it.name
+		}
+		for _, match := range fuzzy.Find(term, names) {
+			m.visible = append(m.visible, match.Index)
+		}
+	}
+	m.scroll.SetCount(len(m.visible))
+	m.scroll.Top()
+}
+
+func (m *FileManagerModel) setFilterState(s filterState) {
+	m.filterState = s
+	m.scroll.SetRows(m.listRows())
+}
+
+func (m *FileManagerModel) clearFilter() {
+	m.filter.Reset()
+	m.filter.Blur()
+	m.setFilterState(unfiltered)
+	m.applyFilter()
+}
+
+func (m *FileManagerModel) goToParent() {
+	if parentDir := filepath.Dir(m.dir); parentDir != m.dir {
+		m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
+	}
 }
 
 func (m *FileManagerModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// The parent UI sends the size of the content area below its chrome.
-		m.list.SetSize(msg.Width, msg.Height)
-		// We still pass WindowSizeMsg down so the list updates itself.
-	case tea.KeyMsg:
-		// We only intercept keys for directory traversal and selection.
-		// Navigation (up/down/j/k) and filtering are handled by m.list.Update
-		if !m.list.SettingFilter() {
-			if key.Matches(msg, fmKeys.Back) {
-				parentDir := filepath.Dir(m.dir)
-				if parentDir != m.dir {
-					m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
+func (m *FileManagerModel) Update(msg tea.Msg) tea.Cmd {
+	keyMsg, isKey := msg.(tea.KeyMsg)
+
+	if m.filterState == filtering {
+		if isKey {
+			switch {
+			case key.Matches(keyMsg, fmKeys.CancelFilter):
+				m.clearFilter()
+				return nil
+			case key.Matches(keyMsg, fmKeys.AcceptFilter):
+				m.filter.Blur()
+				if m.filter.Value() == "" {
+					m.setFilterState(unfiltered)
+				} else {
+					m.setFilterState(filterApplied)
 				}
-				return m, nil
-			} else if key.Matches(msg, fmKeys.Dir) {
-				if i, ok := m.list.SelectedItem().(item); ok {
-					if i.name == ".." {
-						parentDir := filepath.Dir(m.dir)
-						if parentDir != m.dir {
-							m.loadDirAndSelectChild(parentDir, filepath.Base(m.dir))
-						}
-					} else if i.isDir {
-						m.loadDir(filepath.Join(m.dir, i.name))
-					}
-				}
-				return m, nil
-			} else if key.Matches(msg, fmKeys.Open) {
-				if i, ok := m.list.SelectedItem().(item); ok {
-					if i.name == ".." {
-						return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
-					} else if i.isDir {
-						selectedDir := filepath.Join(m.dir, i.name)
-						return m, func() tea.Msg { return msgSwitchToDashboard{dir: selectedDir} }
-					} else {
-						return m, func() tea.Msg { return msgSwitchToDashboard{dir: m.dir} }
-					}
-				}
+				return nil
 			}
 		}
+		// Typing and cursor blink go to the filter input.
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		if isKey {
+			m.applyFilter()
+		}
+		return cmd
 	}
 
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	if !isKey {
+		return nil
+	}
+	switch {
+	case key.Matches(keyMsg, fmKeys.Up):
+		m.scroll.Move(-1)
+	case key.Matches(keyMsg, fmKeys.Down):
+		m.scroll.Move(1)
+	case key.Matches(keyMsg, fmKeys.PageUp):
+		m.scroll.Move(-m.scroll.Page())
+	case key.Matches(keyMsg, fmKeys.PageDown):
+		m.scroll.Move(m.scroll.Page())
+	case key.Matches(keyMsg, fmKeys.Top):
+		m.scroll.Top()
+	case key.Matches(keyMsg, fmKeys.Bottom):
+		m.scroll.Bottom()
+	case key.Matches(keyMsg, fmKeys.Filter):
+		m.setFilterState(filtering)
+		return m.filter.Focus()
+	case key.Matches(keyMsg, fmKeys.ClearFilter) && m.filterState == filterApplied:
+		m.clearFilter()
+	case key.Matches(keyMsg, fmKeys.Back):
+		m.goToParent()
+	case key.Matches(keyMsg, fmKeys.Dir):
+		if it, ok := m.selected(); ok {
+			if it.name == ".." {
+				m.goToParent()
+			} else if it.isDir {
+				m.loadDir(filepath.Join(m.dir, it.name))
+			}
+		}
+	case key.Matches(keyMsg, fmKeys.Open):
+		if it, ok := m.selected(); ok {
+			dir := m.dir
+			if it.isDir && it.name != ".." {
+				dir = filepath.Join(m.dir, it.name)
+			}
+			return func() tea.Msg { return msgSwitchToDashboard{dir: dir} }
+		}
+	}
+	return nil
 }
+
+// ShortHelp implements help.KeyMap with the keys that work right now.
+func (m *FileManagerModel) ShortHelp() []key.Binding {
+	if m.filterState == filtering {
+		return append([]key.Binding{fmKeys.AcceptFilter, fmKeys.CancelFilter}, globalHelp(true)...)
+	}
+	clear := fmKeys.ClearFilter
+	clear.SetEnabled(m.filterState == filterApplied)
+	return append([]key.Binding{fmKeys.Up, fmKeys.Dir, fmKeys.Back, fmKeys.Open, fmKeys.Filter, clear},
+		globalHelp(false)...)
+}
+
+func (m *FileManagerModel) FullHelp() [][]key.Binding { return [][]key.Binding{m.ShortHelp()} }
 
 func (m *FileManagerModel) View() string {
 	var lines []string
-
-	if m.list.SettingFilter() || m.list.FilterValue() != "" {
-		lines = append(lines, m.list.FilterInput.View(), "")
+	if m.filterState != unfiltered {
+		lines = append(lines, m.filter.View(), "")
 	}
 
-	items := m.list.VisibleItems()
-	n := len(items)
-
-	availHeight := m.list.Height()
-	if m.list.SettingFilter() || m.list.FilterValue() != "" {
-		availHeight -= 2
-	}
-	availHeight -= 2 // reserved for help bar & spacing
-	if availHeight < 1 {
-		availHeight = 1
-	}
-
-	sel := m.list.Index()
-
-	if sel < m.topOffset {
-		m.topOffset = sel
-	}
-	if sel >= m.topOffset+availHeight {
-		m.topOffset = sel - availHeight + 1
-	}
-	if m.topOffset > n-availHeight {
-		m.topOffset = n - availHeight
-	}
-	if m.topOffset < 0 {
-		m.topOffset = 0
-	}
-
-	if n == 0 {
+	rows := m.listRows()
+	entriesStart := len(lines)
+	if len(m.visible) == 0 {
 		lines = append(lines, "  No files found.")
 	} else {
-		for i := m.topOffset; i < m.topOffset+availHeight && i < n; i++ {
-			it, ok := items[i].(item)
-			if !ok {
-				continue
-			}
-
-			var icon string
+		start, end := m.scroll.Visible()
+		for i := start; i < end; i++ {
+			it := m.items[m.visible[i]]
+			icon := "📄 "
 			if it.isDir {
 				icon = "📁 "
-			} else {
-				icon = "📄 "
 			}
+			text := truncateText(icon+it.name, m.width-2) // 2 = selection prefix
 
-			text := truncateText(icon+it.name, m.list.Width()-2) // 2 = selection prefix
-
-			var itemColor lipgloss.Color
+			itemColor := textColor
 			if it.isM4B || it.hasM4B {
 				itemColor = successColor
-			} else {
-				itemColor = textColor
 			}
 
-			if i == sel {
-				line := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ") +
-					lipgloss.NewStyle().Foreground(itemColor).Bold(true).Render(text)
-				lines = append(lines, line)
+			if i == m.scroll.Cursor() {
+				lines = append(lines, lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ")+
+					lipgloss.NewStyle().Foreground(itemColor).Bold(true).Render(text))
 			} else {
-				line := lipgloss.NewStyle().Foreground(itemColor).Render("  " + text)
-				lines = append(lines, line)
+				lines = append(lines, lipgloss.NewStyle().Foreground(itemColor).Render("  "+text))
 			}
 		}
 	}
 
-	for len(lines) < availHeight {
+	for len(lines)-entriesStart < rows { // pad so the help bar stays at the bottom
 		lines = append(lines, "")
 	}
 
-	lines = append(lines, "", m.list.Help.View(m.list))
+	lines = append(lines, "", m.help.View(m))
 	return strings.Join(lines, "\n")
 }

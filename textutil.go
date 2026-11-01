@@ -4,7 +4,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/reflow/truncate"
+	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 )
+
+// wrapText wraps s to w cells at word boundaries, hard-breaking words that are
+// longer than a line (paths, ffmpeg arguments).
+func wrapText(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	return wrap.String(wordwrap.String(s, w), w)
+}
 
 const ellipsis = "…"
 

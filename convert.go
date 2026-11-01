@@ -65,8 +65,10 @@ func parallelConvert(ctx context.Context, targetDir, convertDir string, aBitrate
 						updates <- msgLog{text: "converted " + filename}
 						mu.Lock()
 						convertedCount++
-						updates <- msgProgress{completed: convertedCount, total: len(files)}
+						done := convertedCount
 						mu.Unlock()
+						// Send outside the lock so workers don't queue behind the UI.
+						updates <- msgProgress{completed: done, total: len(files)}
 					}
 				}
 				if updates != nil {

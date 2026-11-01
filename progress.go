@@ -15,38 +15,17 @@ import (
 
 var progKeys = struct {
 	ToggleLogs key.Binding
-	Quit       key.Binding
 	Back       key.Binding
-	Theme      key.Binding
 }{
 	ToggleLogs: key.NewBinding(
 		key.WithKeys("l", "L"),
-		key.WithHelp("l", "toggle logs"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "ctrl+c"),
-		key.WithHelp("q", "quit"),
+		key.WithHelp("l", "full logs"),
 	),
 	Back: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
 	),
-	Theme: key.NewBinding(
-		key.WithKeys("t", "T"),
-		key.WithHelp("t", "theme"),
-	),
 }
-
-type progressKeyMap struct{}
-
-func (k progressKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{progKeys.ToggleLogs, progKeys.Theme, progKeys.Back, progKeys.Quit}
-}
-func (k progressKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{k.ShortHelp()}
-}
-
-var progHelpKeys = progressKeyMap{}
 
 type msgLog struct {
 	text string
@@ -104,6 +83,9 @@ type msgInitWorkers struct {
 	count int
 }
 
+// updatesBuffer lets ffmpeg workers report without waiting for each render.
+const updatesBuffer = 256
+
 type ProgressModel struct {
 	ctx    context.Context
 	config ConversionConfig
@@ -116,6 +98,8 @@ type ProgressModel struct {
 	currentStep int
 
 	logs         []string
+	wrapped      []string // logs wrapped to wrapWidth, one entry per log line
+	wrapWidth    int
 	showFullLogs bool
 	cancelled    bool
 	err          error // set when the pipeline failed
@@ -131,8 +115,15 @@ type ProgressModel struct {
 	height     int
 }
 
-func (m *ProgressModel) updateThemeStyles() {
+// updateThemeStyles re-themes the screen. The progress bar's gradient can only
+// be set at construction, so the bar is rebuilt and re-animated to its value.
+func (m *ProgressModel) updateThemeStyles() tea.Cmd {
 	applyHelpStyles(&m.help.Styles)
+	bar := newProgressBar()
+	bar.Width = m.progress.Width
+	pct := m.progress.Percent()
+	m.progress = bar
+	return m.progress.SetPercent(pct)
 }
 
 // logBoxStyle frames the full-log viewport. The frame is drawn outside the
@@ -148,10 +139,8 @@ func logBoxStyle() lipgloss.Style {
 func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
 	files := listFilesByExt(dir, ".mp3")
 
-	// The percentage is part of the status label, so the bar doesn't print its own.
-	prog := progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage())
+	prog := newProgressBar()
 	prog.Width = 48
-	vp := viewport.New(80, 20)
 
 	m := &ProgressModel{
 		ctx:        ctx,
@@ -159,15 +148,19 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 		totalFiles: len(files),
 		workers:    []string{},
 		logs:       []string{"Starting conversion..."},
-		updates:    make(chan tea.Msg),
+		updates:    make(chan tea.Msg, updatesBuffer),
 		progress:   prog,
-		viewport:   vp,
+		viewport:   viewport.New(80, 20),
 		help:       newHelpModel(),
 		panelWidth: 80,
 	}
-
-	m.viewport.SetContent(strings.Join(m.logs, "\n"))
+	m.refreshLogView()
 	return m
+}
+
+// Finished reports whether the run has ended (done, failed or cancelled).
+func (m *ProgressModel) Finished() bool {
+	return m.err != nil || m.cancelled || m.currentStep >= numPipelineSteps
 }
 
 // msgUpdatesClosed means the pipeline has exited and closed its channel.
@@ -196,112 +189,138 @@ func (m *ProgressModel) detach() {
 	}()
 }
 
+// Init starts the pipeline as a command (Bubble Tea runs each command in its
+// own goroutine); the pipeline closes the updates channel when it returns.
 func (m *ProgressModel) Init() tea.Cmd {
-	go runConversionPipeline(m.ctx, m.config, m.updates)
-	return waitForUpdate(m.updates)
+	ctx, config, updates := m.ctx, m.config, m.updates
+	run := func() tea.Msg {
+		runConversionPipeline(ctx, config, updates)
+		return nil
+	}
+	return tea.Batch(run, waitForUpdate(m.updates))
 }
 
-func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
+func (m *ProgressModel) SetSize(w, h int) {
+	m.width, m.height = w, h
+	m.panelWidth = max(40, w-2) // panel border is 2 columns
+	frameW, frameH := logBoxStyle().GetFrameSize()
+	m.viewport.Width = max(1, w-frameW)
+	m.viewport.Height = max(1, h-frameH-2) // blank line + help
+	m.help.Width = w
+	m.refreshLogView()
+}
 
+// refreshLogView wraps the logs to the viewport width (the viewport cuts long
+// lines and can't scroll sideways) and keeps following the end if it was there.
+// Wrapped lines are cached; everything is rewrapped only when the width changes.
+func (m *ProgressModel) refreshLogView() {
+	if m.wrapWidth != m.viewport.Width {
+		m.wrapWidth = m.viewport.Width
+		m.wrapped = m.wrapped[:0]
+	}
+	for i := len(m.wrapped); i < len(m.logs); i++ {
+		m.wrapped = append(m.wrapped, wrapText(m.logs[i], m.wrapWidth))
+	}
+	follow := m.viewport.AtBottom() // check before SetContent: more content means not at bottom
+	m.viewport.SetContent(strings.Join(m.wrapped, "\n"))
+	if follow {
+		m.viewport.GotoBottom()
+	}
+}
+
+func (m *ProgressModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// The parent UI sends the size of the content area below its chrome.
-		m.width, m.height = msg.Width, msg.Height
-		m.panelWidth = max(40, msg.Width-2) // panel border is 2 columns
-
-		frameW, frameH := logBoxStyle().GetFrameSize()
-		m.viewport.Width = max(1, msg.Width-frameW)
-		m.viewport.Height = max(1, msg.Height-frameH-2) // blank line + help
-		m.help.Width = msg.Width
-
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		cmds = append(cmds, vpCmd)
-
-		return m, tea.Batch(cmds...)
-
 	case tea.KeyMsg:
 		if key.Matches(msg, progKeys.ToggleLogs) {
 			m.showFullLogs = !m.showFullLogs
 			if m.showFullLogs {
 				m.viewport.GotoBottom()
 			}
+			return nil
 		}
 		if m.showFullLogs {
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			cmds = append(cmds, vpCmd)
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return cmd
 		}
-		return m, tea.Batch(cmds...)
+		return nil
 
 	case progress.FrameMsg:
 		progressModel, cmd := m.progress.Update(msg)
 		m.progress = progressModel.(progress.Model)
-		return m, cmd
+		return cmd
 
 	case msgLog:
 		m.logs = append(m.logs, msg.text)
-		if len(m.logs) > 1000 {
-			m.logs = m.logs[len(m.logs)-1000:]
+		if drop := len(m.logs) - 1000; drop > 0 {
+			m.logs = m.logs[drop:]
+			m.wrapped = m.wrapped[min(drop, len(m.wrapped)):]
 		}
-		// Check before SetContent: once content grows, AtBottom is false.
-		follow := m.viewport.AtBottom()
-		m.viewport.SetContent(strings.Join(m.logs, "\n"))
-		if follow {
-			m.viewport.GotoBottom()
-		}
-		return m, waitForUpdate(m.updates)
+		m.refreshLogView()
+		return waitForUpdate(m.updates)
 
 	case msgWorkerUpdate:
 		for len(m.workers) <= msg.workerID {
 			m.workers = append(m.workers, "Idle")
 		}
 		m.workers[msg.workerID] = msg.status
-		return m, waitForUpdate(m.updates)
+		return waitForUpdate(m.updates)
 
 	case msgProgress:
-		m.convertedFiles = msg.completed
+		// Workers report concurrently, so counts may arrive out of order.
+		m.convertedFiles = max(m.convertedFiles, msg.completed)
 		m.totalFiles = msg.total
 		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
-		return m, tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
+		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
 
 	case msgStepAdvance:
 		m.currentStep = msg.step
 		pct := overallProgress(m.currentStep, m.convertedFiles, m.totalFiles)
-		return m, tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
+		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(pct))
 
 	case msgInitWorkers:
 		m.workers = make([]string, msg.count)
 		for i := 0; i < msg.count; i++ {
 			m.workers[i] = "Starting..."
 		}
-		return m, waitForUpdate(m.updates)
+		return waitForUpdate(m.updates)
 
 	case msgError:
 		m.err = msg.err
-		return m, waitForUpdate(m.updates)
+		return waitForUpdate(m.updates)
 	case msgConversionDone:
-		m.currentStep = 6
-		return m, waitForUpdate(m.updates)
+		m.currentStep = numPipelineSteps
+		return waitForUpdate(m.updates)
 	case msgCancelled:
 		m.cancelled = true
-		return m, waitForUpdate(m.updates)
+		return waitForUpdate(m.updates)
 	case msgUpdatesClosed:
-		return m, nil
+		return nil
 	}
-
-	if m.showFullLogs {
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		cmds = append(cmds, vpCmd)
-	}
-	return m, tea.Batch(cmds...)
+	return nil
 }
+
+// ShortHelp implements help.KeyMap with the keys that work right now.
+func (m *ProgressModel) ShortHelp() []key.Binding {
+	logs := progKeys.ToggleLogs
+	var b []key.Binding
+	if m.showFullLogs {
+		logs.SetHelp("l", "summary")
+		scroll := m.viewport.KeyMap.Up
+		scroll.SetHelp("↑/↓/pgup/pgdn", "scroll")
+		b = append(b, scroll)
+	}
+	back := progKeys.Back
+	back.SetEnabled(m.Finished())
+	b = append(b, logs, back)
+	return append(b, globalHelp(false)...)
+}
+
+func (m *ProgressModel) FullHelp() [][]key.Binding { return [][]key.Binding{m.ShortHelp()} }
 
 func (m *ProgressModel) View() string {
 	if m.showFullLogs {
-		return lipgloss.JoinVertical(lipgloss.Left, logBoxStyle().Render(m.viewport.View()), "", m.help.View(progHelpKeys))
+		return lipgloss.JoinVertical(lipgloss.Left, logBoxStyle().Render(m.viewport.View()), "", m.help.View(m))
 	}
 
 	statusText := lipgloss.NewStyle().Foreground(warningColor).Render("Working...")
@@ -437,7 +456,7 @@ func (m *ProgressModel) View() string {
 	logsStr := panelStyle.Width(m.panelWidth).Render(lipgloss.JoinVertical(lipgloss.Left, logLines...))
 
 	parts := []string{progressStr}
-	for _, block := range []string{split, logsStr, m.help.View(progHelpKeys)} {
+	for _, block := range []string{split, logsStr, m.help.View(m)} {
 		if roomy {
 			parts = append(parts, "")
 		}

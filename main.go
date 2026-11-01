@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"fmt"
 	"os"
 	"strings"
 
@@ -35,6 +35,11 @@ func collectArguments() (Arguments, string) {
 }
 
 func main() {
+	// os.Exit skips deferred calls, so all cleanup lives in run().
+	os.Exit(run())
+}
+
+func run() int {
 	defer cleanupState.clean()
 
 	arguments, mode := collectArguments()
@@ -42,15 +47,15 @@ func main() {
 	wd := getWd()
 	var initialState state
 
-	if mode == "go" {
+	switch mode {
+	case "go":
 		initialState = stateDashboard
-	} else if mode == "gogogo" {
+	case "gogogo":
 		initialState = stateProgress
-	} else if mode == "fm" {
+	case "fm":
 		initialState = stateFileManager
-	} else {
-		files := listFilesByExt(wd, ".mp3")
-		if len(files) > 0 {
+	default:
+		if len(listFilesByExt(wd, ".mp3")) > 0 {
 			initialState = stateDashboard
 		} else {
 			initialState = stateFileManager
@@ -60,10 +65,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := tea.NewProgram(newUI(ctx, initialState, wd, arguments), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Queries the terminal, so it must happen before the program owns it.
+	detectTheme()
+
+	// No mouse capture: nothing needs clicks, and capture blocks text selection.
+	p := tea.NewProgram(newUI(ctx, initialState, wd, arguments), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		log.Fatalf("Alas, there's been an error: %v", err)
+		fmt.Fprintf(os.Stderr, "Alas, there's been an error: %v\n", err)
+		return 1
 	}
+	return 0
 }
 
 func getWd() string {
