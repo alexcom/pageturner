@@ -135,7 +135,10 @@ type msgStartConversion struct {
 	config ConversionConfig
 }
 
-type msgConversionDone struct{}
+// msgConversionDone ends a successful run and lists what was written.
+type msgConversionDone struct {
+	outputs []outputInfo
+}
 
 type msgError struct {
 	err error
@@ -403,7 +406,8 @@ type Theme struct {
 	Warning    lipgloss.Color
 	DirBadgeBg lipgloss.Color
 	DirBadgeFg lipgloss.Color
-	GradientA  string // progress bar gradient
+	OnPrimary  lipgloss.Color // text on a Primary background (buttons)
+	GradientA  string         // progress bar gradient
 	GradientB  string
 }
 
@@ -420,6 +424,7 @@ var (
 		Warning:    lipgloss.Color("#FFB800"),
 		DirBadgeBg: lipgloss.Color("#00ADB5"),
 		DirBadgeFg: lipgloss.Color("#1A1A1A"),
+		OnPrimary:  lipgloss.Color("#1A1A1A"),
 		GradientA:  "#5A56E0", // bubbles' default gradient
 		GradientB:  "#EE6FF8",
 	}
@@ -434,6 +439,7 @@ var (
 		Warning:    lipgloss.Color("#D97706"),
 		DirBadgeBg: lipgloss.Color("#005F73"),
 		DirBadgeFg: lipgloss.Color("#FFFFFF"),
+		OnPrimary:  lipgloss.Color("#FFFFFF"),
 		GradientA:  "#4338CA",
 		GradientB:  "#DB2777",
 	}
@@ -448,6 +454,7 @@ var (
 	warningColor   lipgloss.Color
 	dirBadgeBg     lipgloss.Color
 	dirBadgeFg     lipgloss.Color
+	onPrimaryColor lipgloss.Color
 )
 
 func applyTheme(kind ThemeKind) {
@@ -466,6 +473,7 @@ func applyTheme(kind ThemeKind) {
 	warningColor = t.Warning
 	dirBadgeBg = t.DirBadgeBg
 	dirBadgeFg = t.DirBadgeFg
+	onPrimaryColor = t.OnPrimary
 }
 
 func init() {

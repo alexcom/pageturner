@@ -21,8 +21,9 @@ var progKeys = struct {
 		key.WithKeys("l", "L"),
 		key.WithHelp("l", "full logs"),
 	),
+	// Only after the run ends; Enter is the natural "continue" on the finish screen.
 	Back: key.NewBinding(
-		key.WithKeys("esc"),
+		key.WithKeys("esc", "enter"),
 		key.WithHelp("esc", "back"),
 	),
 }
@@ -103,6 +104,7 @@ type ProgressModel struct {
 	showFullLogs bool
 	cancelled    bool
 	err          error // set when the pipeline failed
+	outputs      []outputInfo
 
 	updates chan tea.Msg
 
@@ -156,6 +158,10 @@ func newProgressModel(ctx context.Context, dir string, config ConversionConfig) 
 	}
 	m.refreshLogView()
 	return m
+}
+
+func (m *ProgressModel) succeeded() bool {
+	return m.err == nil && !m.cancelled && m.currentStep >= numPipelineSteps
 }
 
 // Finished reports whether the run has ended (done, failed or cancelled).
@@ -290,6 +296,7 @@ func (m *ProgressModel) Update(msg tea.Msg) tea.Cmd {
 		return waitForUpdate(m.updates)
 	case msgConversionDone:
 		m.currentStep = numPipelineSteps
+		m.outputs = msg.outputs
 		return waitForUpdate(m.updates)
 	case msgCancelled:
 		m.cancelled = true
@@ -312,6 +319,9 @@ func (m *ProgressModel) ShortHelp() []key.Binding {
 	}
 	back := progKeys.Back
 	back.SetEnabled(m.Finished())
+	if m.succeeded() {
+		back.SetHelp("enter", "convert another")
+	}
 	b = append(b, logs, back)
 	return append(b, globalHelp(false)...)
 }
@@ -437,6 +447,9 @@ func (m *ProgressModel) View() string {
 			body = append(body, lipgloss.NewStyle().Foreground(errorColor).Render(l))
 		}
 		body = append(body, helpStyle().Render("If ffmpeg failed, its output is in fail-<time>.log in the book folder. Press 'l' for logs."))
+	} else if m.succeeded() && len(m.outputs) > 0 {
+		logTitle = bold.Foreground(successColor).Render("DONE")
+		body = m.outputLines(logRows, logInner)
 	} else {
 		body = m.logs[max(0, len(m.logs)-logRows):]
 	}
@@ -463,4 +476,30 @@ func (m *ProgressModel) View() string {
 		parts = append(parts, block)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// outputLines lists the written files for the finish screen, in at most rows lines.
+func (m *ProgressModel) outputLines(rows, width int) []string {
+	ok := lipgloss.NewStyle().Foreground(successColor).Render("✔ ")
+	dim := lipgloss.NewStyle().Foreground(subtextColor)
+	if len(m.outputs) == 1 {
+		o := m.outputs[0]
+		lines := []string{ok + truncateLeft(o.path, width-2), "  " + dim.Render(o.summary())}
+		return lines[:min(len(lines), rows)]
+	}
+	var total int64
+	for _, o := range m.outputs {
+		total += o.size
+	}
+	lines := []string{fmt.Sprintf("%d files written · %s", len(m.outputs), humanSize(total))}
+	for i, o := range m.outputs {
+		if len(lines) == rows-1 && i < len(m.outputs)-1 {
+			lines = append(lines, dim.Render(fmt.Sprintf("  +%d more (press 'l' for logs)", len(m.outputs)-i)))
+			break
+		}
+		note := "  " + o.summary()
+		name := truncateLeft(o.path, max(10, width-2-lipgloss.Width(note)))
+		lines = append(lines, ok+name+dim.Render(note))
+	}
+	return lines[:min(len(lines), rows)]
 }

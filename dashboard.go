@@ -56,7 +56,8 @@ type DashboardModel struct {
 	// Right pane: discovered files (read-only, scrollable)
 	files      []string
 	fileScroll scroller
-	bitrate    int
+	bitrate    int // detected; 0 if unknown
+	bitrateIn  textinput.Model
 
 	// Left pane
 	inputs       []textinput.Model
@@ -67,6 +68,7 @@ type DashboardModel struct {
 	// UI state
 	focusIndex  int
 	showConfirm bool
+	notice      string // validation message, cleared on the next key
 	help        help.Model
 
 	width  int
@@ -78,6 +80,7 @@ func (m *DashboardModel) updateThemeStyles() {
 	for i := range m.inputs {
 		applyInputStyles(&m.inputs[i])
 	}
+	applyInputStyles(&m.bitrateIn)
 	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 	applyHelpStyles(&m.help.Styles)
 }
@@ -91,7 +94,13 @@ const (
 	dashCoverSelection
 	dashRemoveSourceToggle
 	dashFileList
+	dashBitrate
 	dashStartButton
+)
+
+const (
+	minBitrate = 8
+	maxBitrate = 320
 )
 
 func newDashboardModel(ctx context.Context, dir string, removeSource bool) *DashboardModel {
@@ -106,7 +115,7 @@ func newDashboardModel(ctx context.Context, dir string, removeSource bool) *Dash
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 
-	placeholders := []string{"Artist", "Album", "Title", "Performer", "Output Filename"}
+	placeholders := []string{"Unknown Artist", "Unknown Album", "Same as album", "Not set", "Output Filename"}
 	for i := range m.inputs {
 		t := textinput.New()
 		t.Prompt = ""
@@ -115,6 +124,12 @@ func newDashboardModel(ctx context.Context, dir string, removeSource bool) *Dash
 		applyInputStyles(&t)
 		m.inputs[i] = t
 	}
+	m.bitrateIn = textinput.New()
+	m.bitrateIn.Prompt = ""
+	m.bitrateIn.CharLimit = 3
+	m.bitrateIn.Width = 3
+	m.bitrateIn.Placeholder = "64"
+	applyInputStyles(&m.bitrateIn)
 
 	m.focusIndex = dashInputArtist
 	m.inputs[dashInputArtist].Focus()
@@ -123,7 +138,23 @@ func newDashboardModel(ctx context.Context, dir string, removeSource bool) *Dash
 }
 
 func (m *DashboardModel) IsEditingText() bool {
-	return !m.scanning && m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename
+	if m.scanning {
+		return false
+	}
+	return (m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename) || m.focusIndex == dashBitrate
+}
+
+// focusedInput returns the text input with focus, or nil.
+func (m *DashboardModel) focusedInput() *textinput.Model {
+	switch {
+	case m.scanning:
+		return nil
+	case m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename:
+		return &m.inputs[m.focusIndex]
+	case m.focusIndex == dashBitrate:
+		return &m.bitrateIn
+	}
+	return nil
 }
 
 // dirScan is what the dashboard needs to know about a book directory. It is
@@ -176,16 +207,16 @@ func (m *DashboardModel) applyScan(s dirScan) {
 	m.bitrate = s.bitrate
 	m.fileScroll.SetCount(len(m.files))
 
+	if s.bitrate > 0 {
+		m.bitrateIn.SetValue(fmt.Sprint(s.bitrate))
+	}
+
 	if len(m.files) > 0 {
-		orDefault := func(v, def string) string {
-			if v != "" {
-				return v
-			}
-			return def
-		}
-		m.inputs[dashInputArtist].SetValue(orDefault(s.artist, "Unknown Artist"))
-		m.inputs[dashInputAlbum].SetValue(orDefault(s.album, "Unknown Album"))
-		m.inputs[dashInputTitle].SetValue(orDefault(s.title, "Unknown Title"))
+		// Missing tags stay empty and show a placeholder, so "Unknown ..."
+		// isn't written into the book's tags.
+		m.inputs[dashInputArtist].SetValue(s.artist)
+		m.inputs[dashInputAlbum].SetValue(s.album)
+		m.inputs[dashInputTitle].SetValue(s.title)
 		m.inputs[dashInputPerformer].SetValue(s.performer)
 
 		var outName string
@@ -251,8 +282,28 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 		CoverKind:    coverKind,
 		CoverPath:    coverPath,
 		RemoveSource: m.removeSource,
-		BitRate:      m.bitrate,
+		BitRate:      m.chosenBitrate(),
 	}
+}
+
+// chosenBitrate is the bitrate field's value, or 0 if it isn't valid.
+func (m *DashboardModel) chosenBitrate() int {
+	var br int
+	if _, err := fmt.Sscan(m.bitrateIn.Value(), &br); err != nil || br < minBitrate || br > maxBitrate {
+		return 0
+	}
+	return br
+}
+
+// validate returns why the conversion can't start, or "".
+func (m *DashboardModel) validate() string {
+	if len(m.files) == 0 {
+		return "Nothing to convert: this folder has no MP3 files. Press esc to pick another folder."
+	}
+	if m.chosenBitrate() == 0 {
+		return fmt.Sprintf("Enter a bitrate between %d and %d kbps.", minBitrate, maxBitrate)
+	}
+	return ""
 }
 
 func (m *DashboardModel) Init() tea.Cmd {
@@ -374,6 +425,25 @@ func (m *DashboardModel) updateLayout(w, h int) {
 	m.inputs[dashInputOutFilename].SetCursor(m.inputs[dashInputOutFilename].Position())
 }
 
+// focusOn moves focus to index i, focusing or blurring the text inputs.
+func (m *DashboardModel) focusOn(i int) tea.Cmd {
+	m.focusIndex = i
+	var cmds []tea.Cmd
+	for j := dashInputArtist; j <= dashInputOutFilename; j++ {
+		if j == i {
+			cmds = append(cmds, m.inputs[j].Focus())
+		} else {
+			m.inputs[j].Blur()
+		}
+	}
+	if i == dashBitrate {
+		cmds = append(cmds, m.bitrateIn.Focus())
+	} else {
+		m.bitrateIn.Blur()
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *DashboardModel) start() tea.Cmd {
 	config := m.getConfig()
 	return func() tea.Msg { return msgStartConversion{config: config} }
@@ -400,6 +470,7 @@ func (m *DashboardModel) Update(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		m.notice = ""
 		if m.showConfirm {
 			switch {
 			case key.Matches(msg, confirmKeys.Yes):
@@ -431,7 +502,11 @@ func (m *DashboardModel) Update(msg tea.Msg) tea.Cmd {
 			if m.focusIndex != dashStartButton {
 				return m.moveFocus(1)
 			}
-			if len(m.files) == 0 {
+			if problem := m.validate(); problem != "" {
+				m.notice = problem
+				if len(m.files) > 0 { // the bitrate is wrong
+					return m.focusOn(dashBitrate)
+				}
 				return nil
 			}
 			if _, err := os.Stat(filepath.Join(m.dir, m.getConfig().OutFilename)); err == nil {
@@ -461,27 +536,25 @@ func (m *DashboardModel) listScroll() *scroller {
 	return &m.fileScroll
 }
 
-// moveFocus moves focus by delta (wrapping) and focuses/blurs text inputs.
+// moveFocus moves focus by delta, wrapping around.
 func (m *DashboardModel) moveFocus(delta int) tea.Cmd {
-	m.focusIndex = (m.focusIndex + delta + dashStartButton + 1) % (dashStartButton + 1)
-
-	cmds := make([]tea.Cmd, len(m.inputs))
-	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
-		if i == m.focusIndex {
-			cmds[i] = m.inputs[i].Focus()
-		} else {
-			m.inputs[i].Blur()
-		}
-	}
-	return tea.Batch(cmds...)
+	return m.focusOn((m.focusIndex + delta + dashStartButton + 1) % (dashStartButton + 1))
 }
 
 func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
-	if !m.IsEditingText() {
+	in := m.focusedInput()
+	if in == nil {
 		return nil
 	}
+	if k, ok := msg.(tea.KeyMsg); ok && in == &m.bitrateIn && k.Type == tea.KeyRunes {
+		for _, r := range k.Runes {
+			if r < '0' || r > '9' {
+				return nil // digits only
+			}
+		}
+	}
 	var cmd tea.Cmd
-	m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+	*in, cmd = in.Update(msg)
 	return cmd
 }
 
@@ -506,7 +579,6 @@ func (m *DashboardModel) ShortHelp() []key.Binding {
 	confirm := dashKeys.Confirm
 	if m.focusIndex == dashStartButton {
 		confirm.SetHelp("enter", "start")
-		confirm.SetEnabled(len(m.files) > 0)
 	}
 	b = append(b, confirm, dashKeys.Next, dashKeys.Back)
 	global := globalHelp(editing)
@@ -612,26 +684,33 @@ func (m *DashboardModel) View() string {
 	for len(right) < lay.paneHeight-2-2*paneVPadding(lay.density)-1 { // keep bitrate at the bottom
 		right = append(right, "")
 	}
-	bitrateStr := "Detected Bitrate: Unknown"
-	if m.bitrate > 0 {
-		bitrateStr = fmt.Sprintf("Detected Bitrate: %d kbps", m.bitrate)
+	detected := "not detected"
+	switch {
+	case m.bitrate > 0 && m.chosenBitrate() == m.bitrate:
+		detected = "detected"
+	case m.bitrate > 0:
+		detected = fmt.Sprintf("detected %d", m.bitrate)
 	}
-	right = append(right, bitrateStr)
+	right = append(right, focusPrefix(dashBitrate)+"Bitrate: "+m.bitrateIn.View()+"kbps  "+
+		lipgloss.NewStyle().Foreground(subtextColor).Render(detected))
 	for i, l := range right {
 		right[i] = row(l)
 	}
-	rightStr := paneStyle(m.focusIndex == dashFileList).Render(lipgloss.JoinVertical(lipgloss.Left, right...))
+	rightStr := paneStyle(m.focusIndex == dashFileList || m.focusIndex == dashBitrate).Render(lipgloss.JoinVertical(lipgloss.Left, right...))
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, strings.Repeat(" ", layoutPaneGap), rightStr)
 
 	// Start button
 	btnText := "START CONVERSION (Enter)"
+	if len(m.files) == 0 {
+		btnText = "NO MP3 FILES TO CONVERT"
+	}
 	if m.focusIndex == dashStartButton {
-		btnText = "> START CONVERSION (Enter) <"
+		btnText = "> " + btnText + " <"
 	}
 	innerBtnStyle := lipgloss.NewStyle().Padding(0, 2)
 	if len(m.files) > 0 {
-		innerBtnStyle = innerBtnStyle.Background(primaryColor).Foreground(dirBadgeFg).Bold(true)
+		innerBtnStyle = innerBtnStyle.Background(primaryColor).Foreground(onPrimaryColor).Bold(true)
 	} else {
 		innerBtnStyle = innerBtnStyle.Background(secondaryColor).Foreground(textColor)
 	}
@@ -646,11 +725,19 @@ func (m *DashboardModel) View() string {
 		btnBlock = btnBlock.Margin(1, 0)
 	}
 
-	parts := []string{split, btnBlock.Render(startBtn)}
-	if !lay.compactButton {
-		parts = append(parts, "")
+	notice := ""
+	if m.notice != "" {
+		notice = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
 	}
-	parts = append(parts, m.help.View(m))
+	parts := []string{split, btnBlock.Render(startBtn)}
+	switch {
+	case !lay.compactButton:
+		parts = append(parts, notice, m.help.View(m))
+	case notice != "":
+		parts = append(parts, notice) // no spare line: the notice replaces help until the next key
+	default:
+		parts = append(parts, m.help.View(m))
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 

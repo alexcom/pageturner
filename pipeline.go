@@ -42,6 +42,10 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 		}
 	}()
 
+	if config.BitRate <= 0 {
+		updates <- msgError{err: fmt.Errorf("no bitrate set (it could not be detected from the MP3 files)")}
+		return
+	}
 	updates <- msgLog{text: fmt.Sprintf("Using bitrate %d kbps", config.BitRate)}
 
 	updates <- msgStepAdvance{step: 1}
@@ -100,7 +104,7 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgLog{text: "Conversion successful!"}
 	updates <- msgStepAdvance{step: 6}
-	updates <- msgConversionDone{}
+	updates <- msgConversionDone{outputs: []outputInfo{describeOutput(ctx, filepath.Join(config.TargetDir, outFilename))}}
 }
 
 func removeSourceFiles(config ConversionConfig, updates chan<- tea.Msg) {

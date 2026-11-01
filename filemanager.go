@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,10 +15,12 @@ import (
 )
 
 type item struct {
-	name   string
-	isDir  bool
-	isM4B  bool
-	hasM4B bool
+	name     string
+	isDir    bool
+	isMP3    bool
+	isM4B    bool
+	hasM4B   bool // folder that already contains an .m4b
+	mp3Count int  // mp3 files directly inside a folder
 }
 
 var fmKeys = struct {
@@ -29,7 +32,7 @@ var fmKeys = struct {
 	Bottom       key.Binding
 	Open         key.Binding
 	Back         key.Binding
-	Dir          key.Binding
+	Convert      key.Binding
 	Filter       key.Binding
 	ClearFilter  key.Binding
 	AcceptFilter key.Binding
@@ -41,9 +44,9 @@ var fmKeys = struct {
 	PageDown:     key.NewBinding(key.WithKeys("pgdown", "f", "d")),
 	Top:          key.NewBinding(key.WithKeys("home", "g")),
 	Bottom:       key.NewBinding(key.WithKeys("end", "G")),
-	Open:         key.NewBinding(key.WithKeys("enter", "o", " "), key.WithHelp("enter", "open")),
-	Back:         key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "parent")),
-	Dir:          key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→", "into")),
+	Open:         key.NewBinding(key.WithKeys("enter", "right", "l"), key.WithHelp("enter", "open")),
+	Back:         key.NewBinding(key.WithKeys("left", "h", "backspace"), key.WithHelp("←", "up")),
+	Convert:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "convert")),
 	Filter:       key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 	ClearFilter:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear filter")),
 	AcceptFilter: key.NewBinding(key.WithKeys("enter", "tab", "up", "down"), key.WithHelp("enter", "apply filter")),
@@ -69,6 +72,8 @@ type FileManagerModel struct {
 
 	filter      textinput.Model
 	filterState filterState
+
+	notice string // one-off message shown above the help bar until the next key
 
 	help   help.Model
 	width  int
@@ -107,8 +112,24 @@ func (m *FileManagerModel) listRows() int {
 	return max(1, rows)
 }
 
-func dirHasM4B(dirPath string) bool {
-	return len(listFilesByExt(dirPath, ".m4b")) > 0
+// dirStats counts the mp3 files in a folder and reports whether it has an .m4b.
+func dirStats(dirPath string) (mp3s int, hasM4B bool) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return 0, false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".mp3":
+			mp3s++
+		case ".m4b":
+			hasM4B = true
+		}
+	}
+	return mp3s, hasM4B
 }
 
 func (m *FileManagerModel) loadDir(dir string) {
@@ -126,13 +147,14 @@ func (m *FileManagerModel) loadDir(dir string) {
 			if strings.HasPrefix(e.Name(), ".") { // skip hidden files
 				continue
 			}
-			isDir := e.IsDir()
-			m.items = append(m.items, item{
-				name:   e.Name(),
-				isDir:  isDir,
-				isM4B:  !isDir && strings.HasSuffix(strings.ToLower(e.Name()), ".m4b"),
-				hasM4B: isDir && dirHasM4B(filepath.Join(m.dir, e.Name())),
-			})
+			it := item{name: e.Name(), isDir: e.IsDir()}
+			if it.isDir {
+				it.mp3Count, it.hasM4B = dirStats(filepath.Join(m.dir, e.Name()))
+			} else {
+				ext := strings.ToLower(filepath.Ext(e.Name()))
+				it.isMP3, it.isM4B = ext == ".mp3", ext == ".m4b"
+			}
+			m.items = append(m.items, it)
 		}
 	}
 	m.clearFilter()
@@ -239,6 +261,7 @@ func (m *FileManagerModel) Update(msg tea.Msg) tea.Cmd {
 	if !isKey {
 		return nil
 	}
+	m.notice = ""
 	switch {
 	case key.Matches(keyMsg, fmKeys.Up):
 		m.scroll.Move(-1)
@@ -259,24 +282,32 @@ func (m *FileManagerModel) Update(msg tea.Msg) tea.Cmd {
 		m.clearFilter()
 	case key.Matches(keyMsg, fmKeys.Back):
 		m.goToParent()
-	case key.Matches(keyMsg, fmKeys.Dir):
-		if it, ok := m.selected(); ok {
+	case key.Matches(keyMsg, fmKeys.Open):
+		if it, ok := m.selected(); ok && it.isDir {
 			if it.name == ".." {
 				m.goToParent()
-			} else if it.isDir {
+			} else {
 				m.loadDir(filepath.Join(m.dir, it.name))
 			}
 		}
-	case key.Matches(keyMsg, fmKeys.Open):
-		if it, ok := m.selected(); ok {
-			dir := m.dir
-			if it.isDir && it.name != ".." {
-				dir = filepath.Join(m.dir, it.name)
-			}
-			return func() tea.Msg { return msgSwitchToDashboard{dir: dir} }
-		}
+	case key.Matches(keyMsg, fmKeys.Convert):
+		return m.convertTarget()
 	}
 	return nil
+}
+
+// convertTarget opens the converter for the highlighted folder, or for the
+// current folder when a file or ".." is highlighted.
+func (m *FileManagerModel) convertTarget() tea.Cmd {
+	dir := m.dir
+	if it, ok := m.selected(); ok && it.isDir && it.name != ".." {
+		dir = filepath.Join(m.dir, it.name)
+	}
+	if len(listFilesByExt(dir, ".mp3")) == 0 {
+		m.notice = "No MP3 files in " + filepath.Base(dir) + " to convert"
+		return nil
+	}
+	return func() tea.Msg { return msgSwitchToDashboard{dir: dir} }
 }
 
 // ShortHelp implements help.KeyMap with the keys that work right now.
@@ -286,7 +317,7 @@ func (m *FileManagerModel) ShortHelp() []key.Binding {
 	}
 	clear := fmKeys.ClearFilter
 	clear.SetEnabled(m.filterState == filterApplied)
-	return append([]key.Binding{fmKeys.Up, fmKeys.Dir, fmKeys.Back, fmKeys.Open, fmKeys.Filter, clear},
+	return append([]key.Binding{fmKeys.Up, fmKeys.Open, fmKeys.Back, fmKeys.Convert, fmKeys.Filter, clear},
 		globalHelp(false)...)
 }
 
@@ -305,24 +336,7 @@ func (m *FileManagerModel) View() string {
 	} else {
 		start, end := m.scroll.Visible()
 		for i := start; i < end; i++ {
-			it := m.items[m.visible[i]]
-			icon := "📄 "
-			if it.isDir {
-				icon = "📁 "
-			}
-			text := truncateText(icon+it.name, m.width-2) // 2 = selection prefix
-
-			itemColor := textColor
-			if it.isM4B || it.hasM4B {
-				itemColor = successColor
-			}
-
-			if i == m.scroll.Cursor() {
-				lines = append(lines, lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ")+
-					lipgloss.NewStyle().Foreground(itemColor).Bold(true).Render(text))
-			} else {
-				lines = append(lines, lipgloss.NewStyle().Foreground(itemColor).Render("  "+text))
-			}
+			lines = append(lines, m.rowView(m.items[m.visible[i]], i == m.scroll.Cursor()))
 		}
 	}
 
@@ -330,6 +344,50 @@ func (m *FileManagerModel) View() string {
 		lines = append(lines, "")
 	}
 
-	lines = append(lines, "", m.help.View(m))
+	status := ""
+	if m.notice != "" {
+		status = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
+	}
+	lines = append(lines, status, m.help.View(m))
 	return strings.Join(lines, "\n")
+}
+
+// rowView renders one entry: icon and name, then a dim note for folders
+// ("12 mp3 · ✓ m4b") so the colours don't need a legend.
+func (m *FileManagerModel) rowView(it item, current bool) string {
+	icon := "📄 "
+	if it.isDir {
+		icon = "📁 "
+	}
+	var notes []string
+	if it.isDir && it.mp3Count > 0 {
+		notes = append(notes, fmt.Sprintf("%d mp3", it.mp3Count))
+	}
+	if it.hasM4B {
+		notes = append(notes, "✓ m4b")
+	}
+	note := ""
+	if len(notes) > 0 {
+		note = "  " + strings.Join(notes, " · ")
+	}
+
+	nameColor := textColor
+	switch {
+	case it.isM4B || it.hasM4B:
+		nameColor = successColor
+	case !it.isDir && !it.isMP3:
+		nameColor = subtextColor
+	}
+	nameStyle := lipgloss.NewStyle().Foreground(nameColor).Bold(current)
+	prefix := "  "
+	if current {
+		prefix = lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ")
+	}
+
+	avail := m.width - 2 // selection prefix
+	if lipgloss.Width(note) > avail/2 {
+		note = ""
+	}
+	name := truncateText(icon+it.name, avail-lipgloss.Width(note))
+	return prefix + nameStyle.Render(name) + lipgloss.NewStyle().Foreground(subtextColor).Render(note)
 }

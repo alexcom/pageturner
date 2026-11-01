@@ -145,10 +145,18 @@ func generateFFMETA(ctx context.Context, targetDir, convertDir string, config Co
 	}
 	removeNonWhitelistedTags(&tagBag)
 	setPredefinedTags(&tagBag)
-	
-	if config.Artist != "" { tagBag.Format.Tags["artist"] = config.Artist }
-	if config.Album != "" { tagBag.Format.Tags["album"] = config.Album }
-	if config.Title != "" { tagBag.Format.Tags["title"] = config.Title }
+
+	if config.Artist != "" {
+		tagBag.Format.Tags["artist"] = config.Artist
+	}
+	if config.Album != "" {
+		tagBag.Format.Tags["album"] = config.Album
+	}
+	if config.Title != "" {
+		tagBag.Format.Tags["title"] = config.Title
+	} else if album := tagBag.Format.Tags["album"]; album != "" {
+		tagBag.Format.Tags["title"] = album // empty title means "same as album"
+	}
 	if config.Performer != "" {
 		tagBag.Format.Tags["performer"] = config.Performer
 	} else {
