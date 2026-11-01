@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -44,17 +45,16 @@ func (d fileDelegate) Render(w io.Writer, l list.Model, index int, item list.Ite
 		}
 	}
 
-	fname := string(i)
-	maxLen := l.Width() - 4
-	if maxLen < 10 {
-		maxLen = 10
-	}
-	if len([]rune(fname)) > maxLen {
-		fname = string([]rune(fname)[:maxLen-3]) + "..."
-	}
-
-	fmt.Fprint(w, prefix+fname)
+	fmt.Fprint(w, prefix+truncateText(string(i), l.Width()-lipgloss.Width(prefix)))
 }
+
+type coverItem struct {
+	kind  CoverKind
+	label string
+	file  string // file name inside the book directory for CoverFile
+}
+
+func (i coverItem) FilterValue() string { return i.label }
 
 type coverDelegate struct{ m *DashboardModel }
 
@@ -62,7 +62,7 @@ func (d coverDelegate) Height() int                             { return 1 }
 func (d coverDelegate) Spacing() int                            { return 0 }
 func (d coverDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 func (d coverDelegate) Render(w io.Writer, l list.Model, index int, item list.Item) {
-	i, ok := item.(simpleItem)
+	i, ok := item.(coverItem)
 	if !ok {
 		return
 	}
@@ -72,7 +72,7 @@ func (d coverDelegate) Render(w io.Writer, l list.Model, index int, item list.It
 		prefix = "  (•) "
 	}
 
-	str := fmt.Sprintf("%s%d. %s", prefix, index+1, i)
+	str := truncateText(fmt.Sprintf("%s%d. %s", prefix, index+1, i.label), l.Width())
 
 	if d.m.focusIndex == dashCoverSelection {
 		if index == l.Index() {
@@ -118,7 +118,7 @@ var dashKeys = struct {
 	),
 	Confirm: key.NewBinding(
 		key.WithKeys("enter"),
-		key.WithHelp("enter", "confirm"),
+		key.WithHelp("enter", "next/start"),
 	),
 	Toggle: key.NewBinding(
 		key.WithKeys(" "),
@@ -146,7 +146,12 @@ func (k dashboardKeyMap) FullHelp() [][]key.Binding {
 var dashHelpKeys = dashboardKeyMap{}
 
 type DashboardModel struct {
+	ctx context.Context
 	dir string
+
+	// Directory scan runs in the background; the form is locked until it ends.
+	scanning bool
+	spinner  spinner.Model
 
 	// Left column
 	files        []string
@@ -168,12 +173,14 @@ type DashboardModel struct {
 	// Window size
 	width  int
 	height int
+	layout dashLayout
 }
 
 func (m *DashboardModel) updateThemeStyles() {
 	for i := range m.inputs {
 		m.inputs[i].Cursor.Style = lipgloss.NewStyle().Foreground(primaryColor)
 	}
+	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 	applyHelpStyles(&m.help.Styles)
 }
 
@@ -189,12 +196,17 @@ const (
 	dashStartButton
 )
 
-func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
+func newDashboardModel(ctx context.Context, dir string, removeSource bool) *DashboardModel {
 	m := &DashboardModel{
-		dir:    dir,
-		inputs: make([]textinput.Model, 5),
-		help:   newHelpModel(),
+		ctx:          ctx,
+		dir:          dir,
+		removeSource: removeSource,
+		inputs:       make([]textinput.Model, 5),
+		help:         newHelpModel(),
+		scanning:     true,
+		spinner:      spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
+	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 
 	m.fileList = list.New([]list.Item{}, fileDelegate{m: m}, 41, 10)
 	m.fileList.SetShowTitle(false)
@@ -234,7 +246,6 @@ func newDashboardModel(ctx context.Context, dir string) *DashboardModel {
 	m.focusIndex = dashInputArtist
 	m.inputs[dashInputArtist].Focus()
 	m.updateLayout(80, 24)
-	m.scanDirectory(ctx)
 	return m
 }
 
@@ -247,85 +258,94 @@ func (m *DashboardModel) updateViewport() {
 }
 
 func (m *DashboardModel) IsEditingText() bool {
-	return m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename
+	return !m.scanning && m.focusIndex >= dashInputArtist && m.focusIndex <= dashInputOutFilename
 }
 
-func (m *DashboardModel) scanDirectory(ctx context.Context) {
-	m.files = listFilesByExt(m.dir, ".mp3")
+// dirScan is what the dashboard needs to know about a book directory. It is
+// produced off the UI thread because it runs ffprobe on every mp3.
+type dirScan struct {
+	dir                             string
+	files                           []string
+	artist, album, title, performer string
+	bitrate                         int
+	hasEmbeddedCover                bool
+	images                          []string
+}
+
+type msgDirScanned struct{ scan dirScan }
+
+func scanDirectory(ctx context.Context, dir string) dirScan {
+	s := dirScan{dir: dir, files: listFilesByExt(dir, ".mp3")}
+	if len(s.files) > 0 {
+		if bb, err := getMetaJsonBytes(ctx, dir, s.files[0]); err == nil {
+			var fileMeta container
+			if err := json.Unmarshal(bb.Bytes(), &fileMeta); err == nil {
+				s.artist = fileMeta.Format.Tags.Artist
+				s.album = fileMeta.Format.Tags.Album
+				s.title = fileMeta.Format.Tags.Title
+				s.performer = fileMeta.Format.Tags.Performer
+			}
+		}
+		if br, err := detectBitrate(ctx, dir, nil); err == nil {
+			s.bitrate = br
+		}
+		s.hasEmbeddedCover = hasCoverImage(ctx, dir, s.files[0])
+	}
+	dirContent, _ := os.ReadDir(dir)
+	for _, file := range dirContent {
+		if !file.IsDir() && isSupportedImageFormatFile(strings.ToLower(file.Name())) {
+			s.images = append(s.images, file.Name())
+		}
+	}
+	return s
+}
+
+func (m *DashboardModel) scanCmd() tea.Cmd {
+	ctx, dir := m.ctx, m.dir
+	return func() tea.Msg { return msgDirScanned{scan: scanDirectory(ctx, dir)} }
+}
+
+func (m *DashboardModel) applyScan(s dirScan) {
+	m.scanning = false
+	m.files = s.files
+	m.bitrate = s.bitrate
 	m.updateViewport()
 
 	if len(m.files) > 0 {
-		artist, album, title, performer := "", "", "", ""
-		bb, err := getMetaJsonBytes(ctx, m.dir, m.files[0])
-		if err == nil {
-			var fileMeta container
-			if err := json.Unmarshal(bb.Bytes(), &fileMeta); err == nil {
-				artist = fileMeta.Format.Tags.Artist
-				album = fileMeta.Format.Tags.Album
-				title = fileMeta.Format.Tags.Title
-				performer = fileMeta.Format.Tags.Performer
+		orDefault := func(v, def string) string {
+			if v != "" {
+				return v
 			}
+			return def
 		}
+		m.inputs[dashInputArtist].SetValue(orDefault(s.artist, "Unknown Artist"))
+		m.inputs[dashInputAlbum].SetValue(orDefault(s.album, "Unknown Album"))
+		m.inputs[dashInputTitle].SetValue(orDefault(s.title, "Unknown Title"))
+		m.inputs[dashInputPerformer].SetValue(s.performer)
 
-		if br, err := detectBitrate(ctx, m.dir, nil); err == nil {
-			m.bitrate = br
-		}
-
-		if artist != "" {
-			m.inputs[dashInputArtist].SetValue(artist)
-		} else {
-			m.inputs[dashInputArtist].SetValue("Unknown Artist")
-		}
-
-		if album != "" {
-			m.inputs[dashInputAlbum].SetValue(album)
-		} else {
-			m.inputs[dashInputAlbum].SetValue("Unknown Album")
-		}
-
-		if title != "" {
-			m.inputs[dashInputTitle].SetValue(title)
-		} else {
-			m.inputs[dashInputTitle].SetValue("Unknown Title")
-		}
-
-		if performer != "" {
-			m.inputs[dashInputPerformer].SetValue(performer)
-		} else {
-			m.inputs[dashInputPerformer].SetValue("")
-		}
-
-		outName := ""
-		if artist != "" && album != "" {
-			outName = fmt.Sprintf("%s - %s", artist, album)
-		} else if album != "" {
-			outName = fmt.Sprintf("%s", album)
+		var outName string
+		if s.artist != "" && s.album != "" {
+			outName = fmt.Sprintf("%s - %s", s.artist, s.album)
+		} else if s.album != "" {
+			outName = s.album
 		} else {
 			outName = filepath.Base(m.dir)
 		}
 		m.inputs[dashInputOutFilename].SetValue(strings.ReplaceAll(outName, string(filepath.Separator), "_"))
 	}
 
-	var coverItems []list.Item
-	coverItems = append(coverItems, simpleItem("Default Cover"))
-	// Extracted cover if possible
-	if len(m.files) > 0 && hasCoverImage(ctx, m.dir, m.files[0]) {
-		coverItems = append(coverItems, simpleItem("Extract from MP3"))
+	coverItems := []list.Item{
+		coverItem{kind: CoverAuto, label: "Auto-detect"},
+		coverItem{kind: CoverDefault, label: "Default Cover"},
 	}
-
-	// Add other jpgs in the directory
-	dirContent, _ := os.ReadDir(m.dir)
-	for _, file := range dirContent {
-		if !file.IsDir() && isSupportedImageFormatFile(strings.ToLower(file.Name())) {
-			coverItems = append(coverItems, simpleItem(file.Name()))
-		}
+	if s.hasEmbeddedCover {
+		coverItems = append(coverItems, coverItem{kind: CoverExtract, label: "Extract from MP3"})
+	}
+	for _, name := range s.images {
+		coverItems = append(coverItems, coverItem{kind: CoverFile, label: name, file: name})
 	}
 	m.coverList.SetItems(coverItems)
-	coverHeight := len(coverItems)
-	if coverHeight < 1 {
-		coverHeight = 1
-	}
-	m.coverList.SetHeight(coverHeight)
+	m.updateLayout(m.width, m.height)
 }
 
 func hasCoverImage(ctx context.Context, dir, filename string) bool {
@@ -345,16 +365,13 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 	outFn = strings.TrimSuffix(outFn, ".m4b")
 	outFn += ".m4b"
 
-	var coverSrc string
-	if sel := m.coverList.SelectedItem(); sel != nil {
-		coverSrc = string(sel.(simpleItem))
-	} else {
-		coverSrc = "Default Cover"
-	}
-
+	coverKind := CoverAuto
 	var coverPath string
-	if coverSrc != "Default Cover" && coverSrc != "Extract from MP3" {
-		coverPath = filepath.Join(m.dir, coverSrc)
+	if sel, ok := m.coverList.SelectedItem().(coverItem); ok {
+		coverKind = sel.kind
+		if sel.kind == CoverFile {
+			coverPath = filepath.Join(m.dir, sel.file)
+		}
 	}
 
 	return ConversionConfig{
@@ -364,7 +381,7 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 		Title:        m.inputs[dashInputTitle].Value(),
 		Performer:    m.inputs[dashInputPerformer].Value(),
 		OutFilename:  outFn,
-		CoverSource:  m.coverList.Index(),
+		CoverKind:    coverKind,
 		CoverPath:    coverPath,
 		RemoveSource: m.removeSource,
 		BitRate:      m.bitrate,
@@ -372,75 +389,121 @@ func (m *DashboardModel) getConfig() ConversionConfig {
 }
 
 func (m *DashboardModel) Init() tea.Cmd {
+	if m.scanning {
+		return tea.Batch(textinput.Blink, m.spinner.Tick, m.scanCmd())
+	}
 	return textinput.Blink
 }
 
-// Layout calculation constants
+// Layout constants. The dashboard receives the content area below the UI chrome.
 const (
-	layoutDocHorizontalMargin       = 4 // 2 left + 2 right from docStyle
-	layoutPaneGap                   = 2 // gap between left and right panes
-	layoutMinPaneWidth              = 30
-	layoutVerticalNonPaneSpace      = 15 // header stack (7), margins (2), framed start btn (4), help (1-2)
-	layoutMinPaneHeight             = 15
-	layoutPaneBorderWidth           = 6 // borders (2) + horizontal padding (4)
-	layoutPaneBorderHeight          = 4 // borders (2) + vertical padding (2)
-	layoutMinContentWidth           = 10
-	layoutLeftPaneNonViewportHeight = 11 // borders (2) + padding (2) + titles/bitrate (4) + offset (3)
-	layoutMinComponentHeight        = 3
-	layoutMetaPrefixLabelWidth      = 14 // prefix (2) + label (11) + textinput cursor margin (1)
-	layoutOutPrefixWidth            = 3  // prefix (2) + textinput cursor margin (1)
+	layoutPaneGap          = 2 // columns between left and right panes
+	layoutPaneHPadding     = 2 // horizontal padding inside each pane, per side
+	layoutMinContentWidth  = 10
+	layoutMetaPrefixWidth  = 14 // focus prefix (2) + label (11) + textinput cursor (1)
+	layoutOutPrefixWidth   = 3  // focus prefix (2) + textinput cursor (1)
+	layoutButtonHeight     = 5  // margin (1) + framed button (3) + margin (1)
+	layoutCompactButtonH   = 1  // unframed one-line button
+	layoutHelpHeight       = 2  // blank line + help bar
+	layoutCompactHelpH     = 1  // help bar only
+	layoutRightFixedRoomy  = 4  // title, blank, (list), blank, bitrate
+	layoutRightFixedDense  = 2  // title, (list), bitrate
+	layoutMinComponentRows = 1
 )
+
+// dashLayout is computed once per resize (or rescan) and used by View.
+type dashLayout struct {
+	paneWidth     int // full pane width including border
+	contentWidth  int // width of text inside a pane
+	paneHeight    int // full pane height including border
+	density       int // 0 roomy, 1 no blank under titles/no vertical padding, 2 no blank lines
+	compactButton bool
+}
+
+// leftFixedRows is the number of left-pane rows besides the cover list.
+func leftFixedRows(density int) int {
+	switch density {
+	case 0:
+		return 17 // 4 sections x (title + blank above/below) + 5 single rows
+	case 1:
+		return 13
+	default:
+		return 10
+	}
+}
+
+func rightFixedRows(density int) int {
+	if density == 2 {
+		return layoutRightFixedDense
+	}
+	return layoutRightFixedRoomy
+}
+
+func paneVPadding(density int) int {
+	if density == 0 {
+		return 1
+	}
+	return 0
+}
 
 func (m *DashboardModel) updateLayout(w, h int) {
 	m.width = w
 	m.height = h
 	m.help.Width = w
 
-	paneWidth := (w - layoutDocHorizontalMargin - layoutPaneGap) / 2
-	if paneWidth < layoutMinPaneWidth {
-		paneWidth = layoutMinPaneWidth
-	}
+	paneWidth := (w - layoutPaneGap) / 2
+	contentWidth := max(layoutMinContentWidth, paneWidth-2-2*layoutPaneHPadding)
+	paneWidth = contentWidth + 2 + 2*layoutPaneHPadding
 
-	paneHeight := h - layoutVerticalNonPaneSpace
-	if paneHeight < layoutMinPaneHeight {
-		paneHeight = layoutMinPaneHeight
-	}
+	coverItems := max(1, len(m.coverList.Items()))
+	candidates := []struct {
+		density int
+		compact bool
+	}{{0, false}, {1, false}, {1, true}, {2, true}}
 
-	contentWidth := paneWidth - layoutPaneBorderWidth
-	if contentWidth < layoutMinContentWidth {
-		contentWidth = layoutMinContentWidth
+	var chosen dashLayout
+	coverRows := coverItems
+	for i, c := range candidates {
+		below := layoutButtonHeight + layoutHelpHeight
+		if c.compact {
+			below = layoutCompactButtonH + layoutCompactHelpH
+		}
+		paneHeight := h - below
+		inner := paneHeight - 2 - 2*paneVPadding(c.density)
+		fitsLeft := inner >= leftFixedRows(c.density)+coverItems
+		fitsRight := inner >= rightFixedRows(c.density)+layoutMinComponentRows
+		last := i == len(candidates)-1
+		if (fitsLeft && fitsRight) || last {
+			if !fitsLeft {
+				// Terminal is very small: let the cover list scroll.
+				coverRows = max(layoutMinComponentRows, inner-leftFixedRows(c.density))
+				inner = leftFixedRows(c.density) + coverRows
+				paneHeight = inner + 2 + 2*paneVPadding(c.density)
+			}
+			chosen = dashLayout{
+				paneWidth:     paneWidth,
+				contentWidth:  contentWidth,
+				paneHeight:    paneHeight,
+				density:       c.density,
+				compactButton: c.compact,
+			}
+			break
+		}
 	}
+	m.layout = chosen
 
+	inner := chosen.paneHeight - 2 - 2*paneVPadding(chosen.density)
 	m.fileList.SetWidth(contentWidth)
-	vpHeight := paneHeight - layoutLeftPaneNonViewportHeight
-	if vpHeight < layoutMinComponentHeight {
-		vpHeight = layoutMinComponentHeight
-	}
-	m.fileList.SetHeight(vpHeight)
-
+	m.fileList.SetHeight(max(layoutMinComponentRows, inner-rightFixedRows(chosen.density)))
 	m.coverList.SetWidth(contentWidth)
+	m.coverList.SetHeight(coverRows)
 
-	coverHeight := len(m.coverList.Items())
-	if coverHeight < 1 {
-		coverHeight = 1
-	}
-	m.coverList.SetHeight(coverHeight)
-
-	// Update text input widths so text scrolls horizontally without wrapping lines inside the border pane.
-	wArtistAlbumTitle := contentWidth - layoutMetaPrefixLabelWidth
-	if wArtistAlbumTitle < 1 {
-		wArtistAlbumTitle = 1
-	}
+	// Text input widths, so text scrolls horizontally instead of wrapping inside the pane.
 	for _, idx := range []int{dashInputArtist, dashInputAlbum, dashInputTitle, dashInputPerformer} {
-		m.inputs[idx].Width = wArtistAlbumTitle
+		m.inputs[idx].Width = max(1, contentWidth-layoutMetaPrefixWidth)
 		m.inputs[idx].SetCursor(m.inputs[idx].Position())
 	}
-
-	wOutFilename := contentWidth - layoutOutPrefixWidth
-	if wOutFilename < 1 {
-		wOutFilename = 1
-	}
-	m.inputs[dashInputOutFilename].Width = wOutFilename
+	m.inputs[dashInputOutFilename].Width = max(1, contentWidth-layoutOutPrefixWidth)
 	m.inputs[dashInputOutFilename].SetCursor(m.inputs[dashInputOutFilename].Position())
 }
 
@@ -459,12 +522,31 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.coverList, cmd = m.coverList.Update(msg)
 			return m, cmd
 		}
+	case msgDirScanned:
+		if msg.scan.dir == m.dir {
+			m.applyScan(msg.scan)
+		}
+		return m, nil
+	case spinner.TickMsg:
+		if !m.scanning {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	case tea.KeyMsg:
+		if m.scanning {
+			if key.Matches(msg, dashKeys.Back) {
+				return m, func() tea.Msg { return msgSwitchToFileManager{} }
+			}
+			return m, nil
+		}
 		if m.showConfirm {
-			if msg.String() == "y" || msg.String() == "Y" || msg.String() == "enter" {
+			// Default is No, as the (y/N) prompt says: Enter must not overwrite.
+			if msg.String() == "y" || msg.String() == "Y" {
 				m.showConfirm = false
 				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
-			} else if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" {
+			} else if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" || msg.String() == "enter" {
 				m.showConfirm = false
 				return m, nil
 			}
@@ -487,37 +569,22 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
-			// Adjust focus
 			if isUp {
-				m.focusIndex--
-			} else {
-				m.focusIndex++
+				return m, m.moveFocus(-1)
 			}
-
-			if m.focusIndex > dashStartButton {
-				m.focusIndex = 0
-			} else if m.focusIndex < 0 {
-				m.focusIndex = dashStartButton
-			}
-
-			m.updateViewport()
-
-			cmds := make([]tea.Cmd, len(m.inputs))
-			for i := dashInputArtist; i <= dashInputOutFilename; i++ {
-				if i == m.focusIndex {
-					cmds[i] = m.inputs[i].Focus()
-				} else {
-					m.inputs[i].Blur()
-				}
-			}
-			return m, tea.Batch(cmds...)
+			return m, m.moveFocus(1)
 		} else if key.Matches(msg, dashKeys.Confirm) {
+			// Enter advances through the form; only the Start button starts the job.
+			if m.focusIndex != dashStartButton {
+				return m, m.moveFocus(1)
+			}
 			if len(m.files) > 0 {
-				if dirHasM4B(m.dir) {
+				config := m.getConfig()
+				if _, err := os.Stat(filepath.Join(m.dir, config.OutFilename)); err == nil {
 					m.showConfirm = true
 					return m, nil
 				}
-				return m, func() tea.Msg { return msgStartConversion{config: m.getConfig()} }
+				return m, func() tea.Msg { return msgStartConversion{config: config} }
 			}
 			return m, nil
 		} else if key.Matches(msg, dashKeys.Toggle) {
@@ -540,6 +607,22 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// moveFocus moves focus by delta (wrapping) and focuses/blurs text inputs.
+func (m *DashboardModel) moveFocus(delta int) tea.Cmd {
+	m.focusIndex = (m.focusIndex + delta + dashStartButton + 1) % (dashStartButton + 1)
+	m.updateViewport()
+
+	cmds := make([]tea.Cmd, len(m.inputs))
+	for i := dashInputArtist; i <= dashInputOutFilename; i++ {
+		if i == m.focusIndex {
+			cmds[i] = m.inputs[i].Focus()
+		} else {
+			m.inputs[i].Blur()
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *DashboardModel) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	for i := range m.inputs {
@@ -559,163 +642,129 @@ func (m *DashboardModel) View() string {
 			BorderForeground(errorColor).
 			Padding(1, 2).
 			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Existing M4B File Found"),
+				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Output File Exists"),
 				"",
-				"An .m4b file already exists in this directory.",
-				"Are you sure you want to start conversion? (y/N)",
+				fmt.Sprintf("%q already exists in this directory.", m.getConfig().OutFilename),
+				"Overwrite it? (y/N)",
 			))
 
-		return lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, dialogBox)
-	}
-	paneWidth := (m.width - layoutDocHorizontalMargin - layoutPaneGap) / 2
-	if paneWidth < layoutMinPaneWidth {
-		paneWidth = layoutMinPaneWidth
-	}
-	paneHeight := m.height - layoutVerticalNonPaneSpace
-	if paneHeight < layoutMinPaneHeight {
-		paneHeight = layoutMinPaneHeight
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
 	}
 
-	contentWidth := paneWidth - layoutPaneBorderWidth
-	if contentWidth < layoutMinContentWidth {
-		contentWidth = layoutMinContentWidth
+	if m.scanning {
+		status := m.spinner.View() + " Reading tags and bitrate…"
+		return lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.Place(m.width, max(1, m.height-1), lipgloss.Center, lipgloss.Center, status),
+			helpStyle().Render("esc back • q quit"))
 	}
-	lineStyle := lipgloss.NewStyle().Width(contentWidth).MaxHeight(1)
 
-	activeBorder := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2).
-		Height(paneHeight - layoutPaneBorderHeight)
+	lay := m.layout
+	lineStyle := lipgloss.NewStyle().Width(lay.contentWidth).MaxHeight(1)
+	title := func(s string) string { return lipgloss.NewStyle().Bold(true).Render(s) }
 
-	inactiveBorder := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(secondaryColor).
-		Padding(1, 2).
-		Height(paneHeight - layoutPaneBorderHeight)
-
-	// Left: Metadata & Output M4B File
-	var left []string
-	left = append(left, lipgloss.NewStyle().Bold(true).Render("METADATA"), "")
-	for i := dashInputArtist; i <= dashInputPerformer; i++ {
-		prefix := "  "
-		if m.focusIndex == i {
-			prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+	paneStyle := func(active bool) lipgloss.Style {
+		border := secondaryColor
+		if active {
+			border = primaryColor
 		}
-		label := []string{"Artist:    ", "Album:     ", "Title:     ", "Performer: "}[i]
-
-		inputView := m.inputs[i].View()
-		left = append(left, prefix+label+inputView)
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(border).
+			Padding(paneVPadding(lay.density), layoutPaneHPadding).
+			Height(lay.paneHeight - 2) // Height includes padding, excludes border
 	}
 
-	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("OUTPUT M4B FILE"), "")
-	prefixOut := "  "
-	if m.focusIndex == dashInputOutFilename {
-		prefixOut = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+	// section adds a titled block, with spacing depending on layout density.
+	var left []string
+	section := func(name string, rows ...string) {
+		if len(left) > 0 && lay.density < 2 {
+			left = append(left, "")
+		}
+		left = append(left, title(name))
+		if lay.density == 0 {
+			left = append(left, "")
+		}
+		left = append(left, rows...)
 	}
-	left = append(left, prefixOut+m.inputs[dashInputOutFilename].View())
-
-	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("COVER ART SOURCE"), "")
-
-	left = append(left, m.coverList.View())
-
-	left = append(left, "", lipgloss.NewStyle().Bold(true).Render("SOURCE MP3 FILES"), "")
-
-	prefix := "  "
-	if m.focusIndex == dashRemoveSourceToggle {
-		prefix = lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+	focusPrefix := func(i int) string {
+		if m.focusIndex == i {
+			return lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+		}
+		return "  "
 	}
+
+	// Left: metadata, output, cover, source options
+	labels := []string{"Artist:    ", "Album:     ", "Title:     ", "Performer: "}
+	var meta []string
+	for i := dashInputArtist; i <= dashInputPerformer; i++ {
+		meta = append(meta, focusPrefix(i)+labels[i]+m.inputs[i].View())
+	}
+	section("METADATA", meta...)
+	section("OUTPUT M4B FILE", focusPrefix(dashInputOutFilename)+m.inputs[dashInputOutFilename].View())
+	section("COVER ART SOURCE", strings.Split(m.coverList.View(), "\n")...)
 	box := "[ ]"
 	if m.removeSource {
 		box = "[x]"
 	}
-	left = append(left, prefix+box+" Remove")
+	section("SOURCE MP3 FILES", focusPrefix(dashRemoveSourceToggle)+box+" Remove")
 
-	var formattedLeft []string
-	for _, l := range left {
-		for _, line := range strings.Split(l, "\n") {
-			formattedLeft = append(formattedLeft, lineStyle.Render(line))
-		}
+	for i, l := range left {
+		left[i] = lineStyle.Render(l)
 	}
-	leftStr := lipgloss.JoinVertical(lipgloss.Left, formattedLeft...)
-	if m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle {
-		leftStr = activeBorder.Render(leftStr)
-	} else {
-		leftStr = inactiveBorder.Render(leftStr)
+	leftActive := m.focusIndex >= dashInputArtist && m.focusIndex <= dashRemoveSourceToggle
+	leftStr := paneStyle(leftActive).Render(lipgloss.JoinVertical(lipgloss.Left, left...))
+
+	// Right: discovered files
+	right := []string{title("DISCOVERED MP3 FILES")}
+	if lay.density < 2 {
+		right = append(right, "")
 	}
-
-	// Right: Discovered files
-	var right []string
-	right = append(right, lipgloss.NewStyle().Bold(true).Render("DISCOVERED MP3 FILES"), "")
-
 	if len(m.files) == 0 {
 		right = append(right, "  No MP3 files found.")
 	} else {
-		for _, line := range strings.Split(m.fileList.View(), "\n") {
-			right = append(right, line)
-		}
+		right = append(right, strings.Split(m.fileList.View(), "\n")...)
 	}
-	right = append(right, "")
-
+	if lay.density < 2 {
+		right = append(right, "")
+	}
 	bitrateStr := "Detected Bitrate: Unknown"
 	if m.bitrate > 0 {
 		bitrateStr = fmt.Sprintf("Detected Bitrate: %d kbps", m.bitrate)
 	}
 	right = append(right, bitrateStr)
-
-	var formattedRight []string
-	for _, l := range right {
-		formattedRight = append(formattedRight, lineStyle.Render(l))
+	for i, l := range right {
+		right[i] = lineStyle.Render(l)
 	}
-	rightStr := lipgloss.JoinVertical(lipgloss.Left, formattedRight...)
-	if m.focusIndex == dashFileList {
-		rightStr = activeBorder.Render(rightStr)
-	} else {
-		rightStr = inactiveBorder.Render(rightStr)
-	}
+	rightStr := paneStyle(m.focusIndex == dashFileList).Render(lipgloss.JoinVertical(lipgloss.Left, right...))
 
-	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, lipgloss.NewStyle().Width(2).Render(""), rightStr)
+	split := lipgloss.JoinHorizontal(lipgloss.Top, leftStr, strings.Repeat(" ", layoutPaneGap), rightStr)
 
+	// Start button
 	btnText := "START CONVERSION (Enter)"
 	if m.focusIndex == dashStartButton {
 		btnText = "> START CONVERSION (Enter) <"
 	}
-
-	innerBtnStyle := lipgloss.NewStyle().
-		Padding(0, 2)
-
+	innerBtnStyle := lipgloss.NewStyle().Padding(0, 2)
 	if len(m.files) > 0 {
-		innerBtnStyle = innerBtnStyle.
-			Background(primaryColor).
-			Foreground(dirBadgeFg).
-			Bold(true)
+		innerBtnStyle = innerBtnStyle.Background(primaryColor).Foreground(dirBadgeFg).Bold(true)
 	} else {
-		innerBtnStyle = innerBtnStyle.
-			Background(secondaryColor).
-			Foreground(textColor)
+		innerBtnStyle = innerBtnStyle.Background(secondaryColor).Foreground(textColor)
+	}
+	startBtn := innerBtnStyle.Render(btnText)
+	btnBlock := lipgloss.NewStyle().Width(lipgloss.Width(split)).Align(lipgloss.Center)
+	if !lay.compactButton {
+		frameStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(secondaryColor)
+		if m.focusIndex == dashStartButton && len(m.files) > 0 {
+			frameStyle = frameStyle.BorderForeground(primaryColor)
+		}
+		startBtn = frameStyle.Render(startBtn)
+		btnBlock = btnBlock.Margin(1, 0)
 	}
 
-	frameStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder())
-
-	if m.focusIndex == dashStartButton && len(m.files) > 0 {
-		frameStyle = frameStyle.BorderForeground(primaryColor)
-	} else {
-		frameStyle = frameStyle.BorderForeground(secondaryColor)
+	parts := []string{split, btnBlock.Render(startBtn)}
+	if !lay.compactButton {
+		parts = append(parts, "")
 	}
-
-	startBtn := frameStyle.Render(innerBtnStyle.Render(btnText))
-	splitWidth := lipgloss.Width(split)
-	centeredStartBtn := lipgloss.NewStyle().
-		Width(splitWidth).
-		Align(lipgloss.Center).
-		Margin(1, 0).
-		Render(startBtn)
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		split,
-		centeredStartBtn,
-		"",
-		m.help.View(dashHelpKeys),
-	)
+	parts = append(parts, m.help.View(dashHelpKeys))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

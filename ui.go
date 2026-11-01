@@ -50,21 +50,26 @@ type UI struct {
 
 	width  int
 	height int
+
+	args Arguments
 }
 
-func newUI(ctx context.Context, initialState state, initialDir string) *UI {
+func newUI(ctx context.Context, initialState state, initialDir string, args Arguments) *UI {
 	m := &UI{
 		ctx:   ctx,
 		state: initialState,
 		dir:   initialDir,
+		args:  args,
 	}
 
 	// Initialize submodels
 	if initialState == stateFileManager {
 		m.fileManager = newFileManagerModel(initialDir)
 	} else if initialState == stateDashboard || initialState == stateProgress {
-		m.dashboard = newDashboardModel(ctx, initialDir)
+		m.dashboard = newDashboardModel(ctx, initialDir, args.RemoveSource)
 		if initialState == stateProgress {
+			// No form to show: scan synchronously so the config has tags and bitrate.
+			m.dashboard.applyScan(scanDirectory(ctx, initialDir))
 			// Fast forward to progress directly (gogogo)
 			m.progress = newProgressModel(ctx, initialDir, m.dashboard.getConfig())
 		}
@@ -101,8 +106,8 @@ type ConversionConfig struct {
 	Title        string
 	Performer    string
 	OutFilename  string
-	CoverSource  int    // index or type of cover
-	CoverPath    string // actual path or empty if default
+	CoverKind    CoverKind
+	CoverPath    string // absolute path, used when CoverKind == CoverFile
 	RemoveSource bool
 	BitRate      int
 }
@@ -127,22 +132,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		if m.fileManager != nil {
-			newModel, cmd := m.fileManager.Update(msg)
-			m.fileManager = newModel.(*FileManagerModel)
-			cmds = append(cmds, cmd)
-		}
-		if m.dashboard != nil {
-			newModel, cmd := m.dashboard.Update(msg)
-			m.dashboard = newModel.(*DashboardModel)
-			cmds = append(cmds, cmd)
-		}
-		if m.progress != nil {
-			newModel, cmd := m.progress.Update(msg)
-			m.progress = newModel.(*ProgressModel)
-			cmds = append(cmds, cmd)
-		}
-		return m, tea.Batch(cmds...)
+		return m, m.resizeChildren()
 
 	case tea.KeyMsg:
 		if m.showQuitConfirm {
@@ -184,8 +174,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case msgError:
-		m.err = msg.err
-		return m, nil
+		if m.state != stateProgress || m.progress == nil {
+			m.err = msg.err
+			return m, nil
+		}
+		// A failed conversion ends the run; the progress screen shows the
+		// failure and the user can still read the logs, go back or quit.
+		m.done = true
 	case error:
 		m.err = msg
 		return m, nil
@@ -193,31 +188,29 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
 		m.dir = msg.dir
-		m.dashboard = newDashboardModel(m.ctx, msg.dir)
-		if m.width != 0 && m.height != 0 {
-			m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		}
-		return m, m.dashboard.Init()
+		m.dashboard = newDashboardModel(m.ctx, msg.dir, m.args.RemoveSource)
+		return m, tea.Batch(m.resizeChildren(), m.dashboard.Init())
 
 	case msgSwitchToFileManager:
+		if m.state == stateProgress && m.progress != nil {
+			m.progress.detach()
+		}
 		m.state = stateFileManager
 		if m.fileManager == nil {
-			m.fileManager = newFileManagerModel(m.dashboard.dir)
+			m.fileManager = newFileManagerModel(m.dir)
+		} else {
+			// A conversion may have added an .m4b since the listing was loaded.
+			m.fileManager.reload()
 		}
-		if m.width != 0 && m.height != 0 {
-			m.fileManager.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		}
-		return m, m.fileManager.Init()
+		m.dir = m.fileManager.dir
+		return m, tea.Batch(m.resizeChildren(), m.fileManager.Init())
 
 	case msgStartConversion:
 		m.state = stateProgress
 		m.dir = msg.config.TargetDir
 		m.done = false
 		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
-		if m.width != 0 && m.height != 0 {
-			m.progress.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		}
-		return m, m.progress.Init()
+		return m, tea.Batch(m.resizeChildren(), m.progress.Init())
 
 	case msgConversionDone:
 		m.done = true
@@ -267,21 +260,62 @@ func (m *UI) headerView() string {
 		}
 	}
 
-	h, _ := docStyle.GetFrameSize()
-	w := m.width - h
-	widthToSet := w - 2
-	if widthToSet < 0 {
-		widthToSet = 0
-	}
-
-	return lipgloss.NewStyle().
+	style := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(primaryColor).
 		Padding(0, 1).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Width(widthToSet).
-		Render(titleText)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(primaryColor)
+	// Width includes padding but not the border.
+	inner := m.width - docStyle.GetHorizontalFrameSize() - style.GetHorizontalBorderSize()
+	if inner < 0 {
+		inner = 0
+	}
+	// Keep the header on one line so the chrome height stays fixed.
+	return style.Width(inner).Render(truncateText(titleText, inner-style.GetHorizontalPadding()))
+}
+
+func (m *UI) dirBadgeView() string {
+	style := lipgloss.NewStyle().
+		Background(dirBadgeBg).
+		Foreground(dirBadgeFg).
+		Padding(0, 1)
+	maxText := m.width - docStyle.GetHorizontalFrameSize() - style.GetHorizontalPadding()
+	return style.Render(truncateLeft(m.dir, maxText))
+}
+
+// chromeView is the header and directory badge shown above every screen.
+func (m *UI) chromeView() string {
+	return lipgloss.JoinVertical(lipgloss.Left, m.headerView(), "", m.dirBadgeView(), "")
+}
+
+// contentSize is the area left for the active screen below the chrome.
+func (m *UI) contentSize() (int, int) {
+	hf, vf := docStyle.GetFrameSize()
+	return max(0, m.width-hf), max(0, m.height-vf-lipgloss.Height(m.chromeView()))
+}
+
+// resizeChildren tells every screen the size of its content area.
+func (m *UI) resizeChildren() tea.Cmd {
+	if m.width == 0 || m.height == 0 {
+		return nil
+	}
+	w, h := m.contentSize()
+	msg := tea.WindowSizeMsg{Width: w, Height: h}
+	var cmds []tea.Cmd
+	if m.fileManager != nil {
+		_, cmd := m.fileManager.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	if m.dashboard != nil {
+		_, cmd := m.dashboard.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	if m.progress != nil {
+		_, cmd := m.progress.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *UI) View() string {
@@ -302,6 +336,9 @@ func (m *UI) View() string {
 	}
 
 	if m.err != nil {
+		// Shown as a centered dialog: appending it below the screen would push
+		// the view past the terminal height and scroll the header away.
+		maxW := max(20, m.width-8)
 		errorBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(errorColor).
@@ -309,27 +346,18 @@ func (m *UI) View() string {
 			Render(lipgloss.JoinVertical(lipgloss.Center,
 				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("FATAL ERROR"),
 				"",
-				m.err.Error(),
+				lipgloss.NewStyle().MaxWidth(maxW).Render(m.err.Error()),
 				"",
 				helpStyle().Render("Press any key to exit"),
 			))
-
-		baseView = baseView + "\n\n" + errorBox
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, errorBox)
 	}
 
 	if baseView == "" {
 		return docStyle.Render("Unknown state")
 	}
 
-	header := m.headerView()
-
-	dirView := lipgloss.NewStyle().
-		Background(dirBadgeBg).
-		Foreground(dirBadgeFg).
-		Padding(0, 1).
-		Render(m.dir)
-
-	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", dirView, "", baseView))
+	fullView := docStyle.Render(lipgloss.JoinVertical(lipgloss.Left, m.chromeView(), baseView))
 
 	if m.showQuitConfirm {
 		dialogBox := lipgloss.NewStyle().
@@ -471,4 +499,3 @@ func applyHelpStyles(s *help.Styles) {
 	s.FullDesc = lipgloss.NewStyle().Foreground(subtextColor)
 	s.FullSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
 }
-

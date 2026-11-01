@@ -53,7 +53,7 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgStepAdvance{step: 2}
 	updates <- msgLog{text: "Resolving cover art..."}
-	cover, tempCover, err := resolveCover(ctx, config.TargetDir, updates)
+	cover, err := resolveCover(ctx, config, convertDir, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
@@ -66,14 +66,14 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 		updates <- msgError{err: err}
 		return
 	}
-	
+
 	// Override generated outFilename if the user provided one
 	if config.OutFilename != "" {
 		outFilename = config.OutFilename
 	}
-	
-	cleanupState.setMetadata(metadataFileName)
-	cleanupState.setOut(outFilename)
+
+	cleanupState.setMetadata(filepath.Join(config.TargetDir, metadataFileName))
+	cleanupState.setOut(filepath.Join(config.TargetDir, outFilename))
 
 	updates <- msgStepAdvance{step: 4}
 	updates <- msgLog{text: "Merging files with metadata..."}
@@ -84,13 +84,12 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 
 	updates <- msgStepAdvance{step: 5}
 	updates <- msgLog{text: "Cleaning up..."}
-	err = cleanup(config.TargetDir, convertDir, tempCover, updates)
+	err = cleanup(config.TargetDir, convertDir, updates)
 	if err != nil {
 		updates <- msgError{err: err}
 		return
 	}
-	
-	cleanupState.setCover("")
+
 	cleanupState.setOut("")
 	cleanupState.setMetadata("")
 
@@ -98,7 +97,7 @@ func runConversionPipeline(ctx context.Context, config ConversionConfig, updates
 		updates <- msgLog{text: "Source removal requested"}
 		removeSourceFiles(config, updates)
 	}
-	
+
 	updates <- msgLog{text: "Conversion successful!"}
 	updates <- msgStepAdvance{step: 6}
 	updates <- msgConversionDone{}
@@ -108,7 +107,9 @@ func removeSourceFiles(config ConversionConfig, updates chan<- tea.Msg) {
 	wd := config.TargetDir
 	entries, err := os.ReadDir(wd)
 	if err != nil {
-		if updates != nil { updates <- msgLog{text: err.Error()} }
+		if updates != nil {
+			updates <- msgLog{text: err.Error()}
+		}
 		return
 	}
 	for _, entry := range entries {
@@ -121,16 +122,9 @@ func removeSourceFiles(config ConversionConfig, updates chan<- tea.Msg) {
 			}
 		}
 	}
-	
-	if config.CoverPath != "" && filepath.Dir(config.CoverPath) == wd {
-		err = os.Remove(config.CoverPath)
-		if err != nil && updates != nil {
-			updates <- msgLog{text: "WARN couldn't remove cover: " + err.Error()}
-		}
-	}
 }
 
-func cleanup(targetDir string, convertDir string, cover string, updates chan<- tea.Msg) error {
+func cleanup(targetDir string, convertDir string, updates chan<- tea.Msg) error {
 	files, err := os.ReadDir(convertDir)
 	if err != nil {
 		return err
@@ -139,16 +133,15 @@ func cleanup(targetDir string, convertDir string, cover string, updates chan<- t
 		if !f.IsDir() && strings.HasSuffix(f.Name(), ".m4a") {
 			err = os.Remove(filepath.Join(convertDir, f.Name()))
 			if err != nil {
-				if updates != nil { updates <- msgLog{text: "WARN " + err.Error()} }
+				if updates != nil {
+					updates <- msgLog{text: "WARN " + err.Error()}
+				}
 			}
 		}
 	}
 	if err = os.Remove(filepath.Join(targetDir, metadataFileName)); err != nil {
-		if updates != nil { updates <- msgLog{text: "WARN " + err.Error()} }
-	}
-	if cover != "" {
-		if err = os.Remove(cover); err != nil {
-			if updates != nil { updates <- msgLog{text: "WARN " + err.Error()} }
+		if updates != nil {
+			updates <- msgLog{text: "WARN " + err.Error()}
 		}
 	}
 	return nil

@@ -29,7 +29,7 @@ func merge(ctx context.Context, targetDir, convertDir, filename, cover string, u
 	if err != nil {
 		return
 	}
-	cleanupState.setMergeList(listFileName)
+	cleanupState.setMergeList(filepath.Join(targetDir, listFileName))
 	defer func() {
 		err := os.Remove(filepath.Join(targetDir, listFileName))
 		if err != nil {

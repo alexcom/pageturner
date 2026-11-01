@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -20,49 +20,81 @@ const (
 	noAudio      = "-an"
 )
 
-func resolveCover(ctx context.Context, targetDir string, updates chan<- tea.Msg) (coverPath string, tempCoverPath string, err error) {
-	if name, err := findCover(targetDir, updates); err == nil && name != "" {
-		return name, "", nil
-	} else if err != nil {
-		if updates != nil {
-			updates <- msgLog{text: "failed to find cover because: " + err.Error()}
+// CoverKind is the cover source chosen on the dashboard.
+type CoverKind int
+
+const (
+	CoverAuto    CoverKind = iota // look for a typical cover image, then extract, then default
+	CoverDefault                  // embedded default image
+	CoverExtract                  // picture embedded in the first mp3
+	CoverFile                     // image file chosen by the user (ConversionConfig.CoverPath)
+)
+
+// resolveCover returns the path of the image to embed. Generated images
+// (extracted or default) are written to convertDir, which is removed after the run.
+func resolveCover(ctx context.Context, config ConversionConfig, convertDir string, updates chan<- tea.Msg) (string, error) {
+	targetDir := config.TargetDir
+	switch config.CoverKind {
+	case CoverFile:
+		if _, err := os.Stat(config.CoverPath); err == nil {
+			sendLog(updates, "Using cover "+filepath.Base(config.CoverPath))
+			return config.CoverPath, nil
 		}
+		sendLog(updates, "WARN selected cover "+config.CoverPath+" not found, detecting automatically")
+	case CoverExtract:
+		if path := extractCover(ctx, targetDir, convertDir, updates); path != "" {
+			return path, nil
+		}
+		return writeDefaultCover(convertDir)
+	case CoverDefault:
+		return writeDefaultCover(convertDir)
 	}
-	if name := extractCover(ctx, targetDir, updates); name != "" {
-		cleanupState.setCover(name)
-		return name, name, nil
+
+	if name, err := findCover(targetDir, updates); err == nil && name != "" {
+		return filepath.Join(targetDir, name), nil
+	} else if err != nil {
+		sendLog(updates, "failed to find cover because: "+err.Error())
 	}
+	if path := extractCover(ctx, targetDir, convertDir, updates); path != "" {
+		return path, nil
+	}
+	return writeDefaultCover(convertDir)
+}
+
+func writeDefaultCover(convertDir string) (string, error) {
 	if len(defaultCoverBytes) == 0 {
-		return "", "", errors.New("embedded default cover not found")
+		return "", errors.New("embedded default cover not found")
 	}
-	err = os.WriteFile(filepath.Join(targetDir, defaultCover), defaultCoverBytes, 0644)
-	if err != nil {
-		return "", "", err
+	path := filepath.Join(convertDir, defaultCover)
+	if err := os.WriteFile(path, defaultCoverBytes, 0644); err != nil {
+		return "", err
 	}
-	cleanupState.setCover(defaultCover)
-	return defaultCover, defaultCover, nil
+	return path, nil
 }
 
 const extractedCoverName = "cover.jpg"
 
-func extractCover(ctx context.Context, targetDir string, updates chan<- tea.Msg) string {
+func extractCover(ctx context.Context, targetDir, convertDir string, updates chan<- tea.Msg) string {
 	mp3s := listFilesByExt(targetDir, ".mp3")
 	if len(mp3s) == 0 {
-		if updates != nil {
-			updates <- msgLog{text: "WARN no mp3 files to extract cover from"}
-		}
+		sendLog(updates, "WARN no mp3 files to extract cover from")
 		return ""
 	}
-	script := []string{ffmpeg, confirm, input, mp3s[0], noAudio, extractedCoverName}
+	out := filepath.Join(convertDir, extractedCoverName)
+	script := []string{ffmpeg, confirm, input, mp3s[0], noAudio, out}
 	err := runScriptArgs(ctx, targetDir, script[0], script[1:], nil)
 	if err != nil {
-		if updates != nil {
-			updates <- msgLog{text: "cover extraction failed with error: " + err.Error()}
-			updates <- msgLog{text: "cover extraction is unsuccessful, will use default cover"}
-		}
+		sendLog(updates, "cover extraction failed with error: "+err.Error())
+		sendLog(updates, "cover extraction is unsuccessful, will use default cover")
 		return ""
 	}
-	return extractedCoverName
+	return out
+}
+
+func sendLog(updates chan<- tea.Msg, text string) {
+	if updates != nil {
+		updates <- msgLog{text: text}
+	}
 }
 
 const maxImageSize = 300 * 1024

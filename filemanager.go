@@ -150,6 +150,15 @@ func (m *FileManagerModel) loadDirAndSelectChild(dir string, childName string) {
 	}
 }
 
+// reload re-reads the current directory and keeps the selected entry.
+func (m *FileManagerModel) reload() {
+	var name string
+	if it, ok := m.list.SelectedItem().(item); ok {
+		name = it.name
+	}
+	m.loadDirAndSelectChild(m.dir, name)
+}
+
 func (m *FileManagerModel) Init() tea.Cmd {
 	return nil
 }
@@ -158,10 +167,8 @@ func (m *FileManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		h, v := docStyle.GetFrameSize()
-		// Account for the main global title and directory view above the list
-		titleHeight := 6 // Bordered box is 3 lines tall, plus dirView (1) and 2 spaces
-		m.list.SetSize(msg.Width-h, msg.Height-v-titleHeight)
+		// The parent UI sends the size of the content area below its chrome.
+		m.list.SetSize(msg.Width, msg.Height)
 		// We still pass WindowSizeMsg down so the list updates itself.
 	case tea.KeyMsg:
 		// We only intercept keys for directory traversal and selection.
@@ -254,7 +261,7 @@ func (m *FileManagerModel) View() string {
 				icon = "📄 "
 			}
 
-			text := icon + it.name
+			text := truncateText(icon+it.name, m.list.Width()-2) // 2 = selection prefix
 
 			var itemColor lipgloss.Color
 			if it.isM4B || it.hasM4B {

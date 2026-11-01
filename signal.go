@@ -10,7 +10,6 @@ type CleanupState struct {
 	convertDir    string
 	metadataFile  string
 	mergeListFile string
-	coverFile     string
 	outFile       string
 }
 
@@ -34,12 +33,6 @@ func (c *CleanupState) setMergeList(path string) {
 	c.mergeListFile = path
 }
 
-func (c *CleanupState) setCover(path string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.coverFile = path
-}
-
 func (c *CleanupState) setOut(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,9 +51,6 @@ func (c *CleanupState) clean() {
 	}
 	if c.mergeListFile != "" {
 		_ = os.Remove(c.mergeListFile)
-	}
-	if c.coverFile != "" {
-		_ = os.Remove(c.coverFile)
 	}
 	if c.outFile != "" {
 		_ = os.Remove(c.outFile)

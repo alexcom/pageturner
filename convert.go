@@ -59,7 +59,7 @@ func parallelConvert(ctx context.Context, targetDir, convertDir string, aBitrate
 				}
 				err := runScriptArgs(ctx, targetDir, ffmpeg, makeArgs(targetDir, convertDir, filename, aBitrate), nil)
 				if err != nil {
-					errCh <- err
+					errCh <- fmt.Errorf("%s: %w", filename, err)
 				} else {
 					if updates != nil {
 						updates <- msgLog{text: "converted " + filename}
@@ -102,8 +102,6 @@ func makeArgs(targetDir, convertDir, filename string, aBitRate int) []string {
 	}
 }
 
-
-
 func detectBitrate(ctx context.Context, dir string, updates chan<- tea.Msg) (int, error) {
 	metaBytesChan, err := readMetadataFromFilesWithExtension(ctx, dir, ".mp3")
 	if err != nil {
@@ -132,7 +130,7 @@ func detectBitrate(ctx context.Context, dir string, updates chan<- tea.Msg) (int
 			return key, nil
 		}
 	}
-	
+
 	sum := 0
 	if updates != nil {
 		updates <- msgLog{text: "Source bit rates:"}
