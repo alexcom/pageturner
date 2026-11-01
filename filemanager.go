@@ -74,6 +74,7 @@ const (
 // rather than wrapping bubbles' list, whose paginator would disagree with the
 // custom rendering about how many rows a page has.
 type FileManagerModel struct {
+	styles  *Styles
 	dir     string
 	dirMP3s int // mp3 files in dir itself
 	items   []item
@@ -94,18 +95,12 @@ type FileManagerModel struct {
 	height int
 }
 
-func newFileManagerModel(dir string) *FileManagerModel {
-	m := &FileManagerModel{help: newHelpModel(), picked: map[string]bool{}}
-	m.filter = textinput.New()
+func newFileManagerModel(styles *Styles, dir string) *FileManagerModel {
+	m := &FileManagerModel{styles: styles, help: styles.newHelp(), picked: map[string]bool{}}
+	m.filter = styles.newInput()
 	m.filter.Prompt = "Filter: "
-	applyInputStyles(&m.filter)
 	m.loadDir(dir)
 	return m
-}
-
-func (m *FileManagerModel) updateThemeStyles() {
-	applyHelpStyles(&m.help.Styles)
-	applyInputStyles(&m.filter)
 }
 
 func (m *FileManagerModel) IsFiltering() bool { return m.filterState == filtering }
@@ -478,9 +473,9 @@ func (m *FileManagerModel) View() string {
 		lines = append(lines, "")
 	}
 
-	status := lipgloss.NewStyle().Foreground(subtextColor).Render(truncateText(m.hint(), m.width))
+	status := m.styles.Dim.Render(truncateText(m.hint(), m.width))
 	if m.notice != "" {
-		status = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
+		status = m.styles.Warning.Render(truncateText(m.notice, m.width))
 	}
 	lines = append(lines, status, m.help.View(m))
 	return strings.Join(lines, "\n")
@@ -532,19 +527,20 @@ func (m *FileManagerModel) rowView(it item, current bool) string {
 		note = "  " + strings.Join(notes, " · ")
 	}
 
-	nameColor := textColor
+	c := m.styles.Colors
+	nameColor := c.Text
 	switch {
 	case it.isM4B || it.hasM4B:
-		nameColor = successColor
+		nameColor = c.Success
 	case picked:
-		nameColor = primaryColor
+		nameColor = c.Primary
 	case !it.isDir && !it.isMP3:
-		nameColor = subtextColor
+		nameColor = c.Subtext
 	}
 	nameStyle := lipgloss.NewStyle().Foreground(nameColor).Bold(current)
 	prefix := "  "
 	if current {
-		prefix = lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("> ")
+		prefix = lipgloss.NewStyle().Foreground(c.Primary).Bold(true).Render("> ")
 	}
 
 	avail := m.width - 2 // selection prefix
@@ -552,5 +548,5 @@ func (m *FileManagerModel) rowView(it item, current bool) string {
 		note = ""
 	}
 	name := truncateText(icon+it.name, avail-lipgloss.Width(note))
-	return prefix + nameStyle.Render(name) + lipgloss.NewStyle().Foreground(subtextColor).Render(note)
+	return prefix + nameStyle.Render(name) + m.styles.Dim.Render(note)
 }

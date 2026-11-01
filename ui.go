@@ -3,10 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -62,6 +59,7 @@ const (
 // Init/Update/View/SetSize; only UI implements tea.Model.
 type UI struct {
 	ctx         context.Context
+	styles      *Styles
 	state       state
 	dir         string
 	fileManager *FileManagerModel
@@ -79,21 +77,22 @@ type UI struct {
 
 func newUI(ctx context.Context, initialState state, initialDir string, args Arguments) *UI {
 	m := &UI{
-		ctx:   ctx,
-		state: initialState,
-		dir:   initialDir,
-		args:  args,
+		ctx:    ctx,
+		styles: newStyles(defaultPalette),
+		state:  initialState,
+		dir:    initialDir,
+		args:   args,
 	}
 
 	switch initialState {
 	case stateFileManager:
-		m.fileManager = newFileManagerModel(initialDir)
+		m.fileManager = newFileManagerModel(m.styles, initialDir)
 	case stateDashboard, stateProgress:
-		m.dashboard = newDashboardModel(ctx, initialDir, nil, args.mode(), args.RemoveSource)
+		m.dashboard = newDashboardModel(ctx, m.styles, initialDir, nil, args.mode(), args.RemoveSource)
 		if initialState == stateProgress {
 			// No form to show (gogogo): scan synchronously so the config has tags and bitrate.
 			m.dashboard.applyScan(scanDirectory(ctx, initialDir))
-			m.progress = newProgressModel(ctx, initialDir, m.dashboard.getConfig())
+			m.progress = newProgressModel(ctx, m.styles, initialDir, m.dashboard.getConfig())
 		}
 	}
 	return m
@@ -204,7 +203,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, uiKeys.Quit) && !capturing:
 			return m.quit()
 		case key.Matches(msg, uiKeys.Theme) && !capturing:
-			return m, m.toggleTheme()
+			toggleTheme()
+			return m, nil
 		case key.Matches(msg, progKeys.Back) && m.state == stateProgress && m.runFinished():
 			return m, func() tea.Msg { return msgSwitchToFileManager{} }
 		}
@@ -224,7 +224,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgSwitchToDashboard:
 		m.state = stateDashboard
 		m.dir = msg.dir
-		m.dashboard = newDashboardModel(m.ctx, msg.dir, msg.files, msg.mode, m.args.RemoveSource)
+		m.dashboard = newDashboardModel(m.ctx, m.styles, msg.dir, msg.files, msg.mode, m.args.RemoveSource)
 		m.resizeChildren()
 		return m, m.dashboard.Init()
 
@@ -234,7 +234,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = stateFileManager
 		if m.fileManager == nil {
-			m.fileManager = newFileManagerModel(m.dir)
+			m.fileManager = newFileManagerModel(m.styles, m.dir)
 		} else {
 			// A conversion may have added an .m4b since the listing was loaded.
 			m.fileManager.reload()
@@ -249,7 +249,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = stateProgress
 		m.dir = msg.config.TargetDir
-		m.progress = newProgressModel(m.ctx, msg.config.TargetDir, msg.config)
+		m.progress = newProgressModel(m.ctx, m.styles, msg.config.TargetDir, msg.config)
 		m.resizeChildren()
 		return m, m.progress.Init()
 	}
@@ -289,12 +289,7 @@ func (m *UI) headerView() string {
 		}
 	}
 
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor).
-		Padding(0, 1).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor)
+	style := m.styles.Header.Copy()
 	// Width includes padding but not the border.
 	inner := max(0, m.width-docStyle.GetHorizontalFrameSize()-style.GetHorizontalBorderSize())
 	// Keep the header on one line so the chrome height stays fixed.
@@ -302,10 +297,7 @@ func (m *UI) headerView() string {
 }
 
 func (m *UI) dirBadgeView() string {
-	style := lipgloss.NewStyle().
-		Background(dirBadgeBg).
-		Foreground(dirBadgeFg).
-		Padding(0, 1)
+	style := m.styles.DirBadge
 	maxText := m.width - docStyle.GetHorizontalFrameSize() - style.GetHorizontalPadding()
 	return style.Render(truncateLeft(m.dir, maxText))
 }
@@ -359,17 +351,13 @@ func (m *UI) View() string {
 		// Shown as a centered dialog: appending it below the screen would push
 		// the view past the terminal height and scroll the header away.
 		maxW := max(20, m.width-8)
-		errorBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(errorColor).
-			Padding(1, 2).
-			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("FATAL ERROR"),
-				"",
-				lipgloss.NewStyle().MaxWidth(maxW).Render(m.err.Error()),
-				"",
-				helpStyle().Render("Press any key to exit"),
-			))
+		errorBox := m.styles.Dialog.Render(lipgloss.JoinVertical(lipgloss.Center,
+			m.styles.DialogTitle.Render("FATAL ERROR"),
+			"",
+			lipgloss.NewStyle().MaxWidth(maxW).Render(m.err.Error()),
+			"",
+			m.styles.Dim.Render("Press any key to exit"),
+		))
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, errorBox)
 	}
 
@@ -378,16 +366,12 @@ func (m *UI) View() string {
 	}
 
 	if m.showQuitConfirm {
-		dialogBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(errorColor).
-			Padding(1, 2).
-			Render(lipgloss.JoinVertical(lipgloss.Center,
-				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Quit Conversion?"),
-				"",
-				"Conversion is currently running.",
-				"Are you sure you want to quit? (y/N)",
-			))
+		dialogBox := m.styles.Dialog.Render(lipgloss.JoinVertical(lipgloss.Center,
+			m.styles.DialogTitle.Render("Quit Conversion?"),
+			"",
+			"Conversion is currently running.",
+			"Are you sure you want to quit? (y/N)",
+		))
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
 	}
 
@@ -395,156 +379,3 @@ func (m *UI) View() string {
 }
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2, 0, 2)
-
-type ThemeKind int
-
-const (
-	ThemeDark ThemeKind = iota
-	ThemeLight
-)
-
-type Theme struct {
-	Primary    lipgloss.Color
-	Secondary  lipgloss.Color
-	Text       lipgloss.Color
-	Subtext    lipgloss.Color
-	Error      lipgloss.Color
-	Success    lipgloss.Color
-	Warning    lipgloss.Color
-	DirBadgeBg lipgloss.Color
-	DirBadgeFg lipgloss.Color
-	OnPrimary  lipgloss.Color // text on a Primary background (buttons)
-	GradientA  string         // progress bar gradient
-	GradientB  string
-}
-
-var (
-	currentThemeKind = ThemeDark
-
-	DarkTheme = Theme{
-		Primary:    lipgloss.Color("#00ADB5"),
-		Secondary:  lipgloss.Color("#393E46"),
-		Text:       lipgloss.Color("#EEEEEE"),
-		Subtext:    lipgloss.Color("#AAAAAA"),
-		Error:      lipgloss.Color("#FF2E63"),
-		Success:    lipgloss.Color("#00D846"),
-		Warning:    lipgloss.Color("#FFB800"),
-		DirBadgeBg: lipgloss.Color("#00ADB5"),
-		DirBadgeFg: lipgloss.Color("#1A1A1A"),
-		OnPrimary:  lipgloss.Color("#1A1A1A"),
-		GradientA:  "#5A56E0", // bubbles' default gradient
-		GradientB:  "#EE6FF8",
-	}
-
-	LightTheme = Theme{
-		Primary:    lipgloss.Color("#005F73"),
-		Secondary:  lipgloss.Color("#CBD5E1"),
-		Text:       lipgloss.Color("#0F172A"),
-		Subtext:    lipgloss.Color("#64748B"),
-		Error:      lipgloss.Color("#DC2626"),
-		Success:    lipgloss.Color("#059669"),
-		Warning:    lipgloss.Color("#D97706"),
-		DirBadgeBg: lipgloss.Color("#005F73"),
-		DirBadgeFg: lipgloss.Color("#FFFFFF"),
-		OnPrimary:  lipgloss.Color("#FFFFFF"),
-		GradientA:  "#4338CA",
-		GradientB:  "#DB2777",
-	}
-
-	currentTheme   Theme
-	primaryColor   lipgloss.Color
-	secondaryColor lipgloss.Color
-	textColor      lipgloss.Color
-	subtextColor   lipgloss.Color
-	errorColor     lipgloss.Color
-	successColor   lipgloss.Color
-	warningColor   lipgloss.Color
-	dirBadgeBg     lipgloss.Color
-	dirBadgeFg     lipgloss.Color
-	onPrimaryColor lipgloss.Color
-)
-
-func applyTheme(kind ThemeKind) {
-	currentThemeKind = kind
-	t := DarkTheme
-	if kind == ThemeLight {
-		t = LightTheme
-	}
-	currentTheme = t
-	primaryColor = t.Primary
-	secondaryColor = t.Secondary
-	textColor = t.Text
-	subtextColor = t.Subtext
-	errorColor = t.Error
-	successColor = t.Success
-	warningColor = t.Warning
-	dirBadgeBg = t.DirBadgeBg
-	dirBadgeFg = t.DirBadgeFg
-	onPrimaryColor = t.OnPrimary
-}
-
-func init() {
-	applyTheme(ThemeDark)
-}
-
-// detectTheme picks the initial theme from the terminal background. It
-// queries the terminal, so it must run before the Bubble Tea program starts.
-func detectTheme() {
-	if !lipgloss.HasDarkBackground() {
-		applyTheme(ThemeLight)
-	}
-}
-
-func (m *UI) toggleTheme() tea.Cmd {
-	if currentThemeKind == ThemeDark {
-		applyTheme(ThemeLight)
-	} else {
-		applyTheme(ThemeDark)
-	}
-	if m.fileManager != nil {
-		m.fileManager.updateThemeStyles()
-	}
-	if m.dashboard != nil {
-		m.dashboard.updateThemeStyles()
-	}
-	if m.progress != nil {
-		return m.progress.updateThemeStyles()
-	}
-	return nil
-}
-
-func helpStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(subtextColor)
-}
-
-func newHelpModel() help.Model {
-	h := help.New()
-	applyHelpStyles(&h.Styles)
-	return h
-}
-
-func applyHelpStyles(s *help.Styles) {
-	s.ShortKey = lipgloss.NewStyle().Foreground(primaryColor)
-	s.ShortDesc = lipgloss.NewStyle().Foreground(subtextColor)
-	s.ShortSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
-	s.FullKey = lipgloss.NewStyle().Foreground(primaryColor)
-	s.FullDesc = lipgloss.NewStyle().Foreground(subtextColor)
-	s.FullSeparator = lipgloss.NewStyle().Foreground(secondaryColor)
-	s.Ellipsis = lipgloss.NewStyle().Foreground(secondaryColor)
-}
-
-// applyInputStyles themes a textinput; its default placeholder colour is a
-// fixed grey that ignores the theme.
-func applyInputStyles(t *textinput.Model) {
-	t.Cursor.Style = lipgloss.NewStyle().Foreground(primaryColor)
-	t.PromptStyle = lipgloss.NewStyle().Foreground(primaryColor)
-	t.PlaceholderStyle = lipgloss.NewStyle().Foreground(subtextColor)
-}
-
-func newProgressBar() progress.Model {
-	// The percentage is part of the status label, so the bar doesn't print its own.
-	return progress.New(
-		progress.WithGradient(currentTheme.GradientA, currentTheme.GradientB),
-		progress.WithoutPercentage(),
-	)
-}

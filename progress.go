@@ -113,6 +113,7 @@ const updatesBuffer = 256
 
 type ProgressModel struct {
 	ctx    context.Context
+	styles *Styles
 	config ConversionConfig
 
 	// Items done/total per step, for steps that report progress.
@@ -133,7 +134,7 @@ type ProgressModel struct {
 
 	updates chan tea.Msg
 
-	progress progress.Model
+	bar      themedBar
 	viewport viewport.Model
 	help     help.Model
 
@@ -142,45 +143,22 @@ type ProgressModel struct {
 	height     int
 }
 
-// updateThemeStyles re-themes the screen. The progress bar's gradient can only
-// be set at construction, so the bar is rebuilt and re-animated to its value.
-func (m *ProgressModel) updateThemeStyles() tea.Cmd {
-	applyHelpStyles(&m.help.Styles)
-	bar := newProgressBar()
-	bar.Width = m.progress.Width
-	pct := m.progress.Percent()
-	m.progress = bar
-	return m.progress.SetPercent(pct)
-}
-
-// logBoxStyle frames the full-log viewport. The frame is drawn outside the
-// viewport: bubbles' viewport shows Height lines but clips its own frame out of
-// that height, which would hide the newest lines.
-func logBoxStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(secondaryColor).
-		PaddingRight(2)
-}
-
-func newProgressModel(ctx context.Context, dir string, config ConversionConfig) *ProgressModel {
+func newProgressModel(ctx context.Context, styles *Styles, dir string, config ConversionConfig) *ProgressModel {
 	files := config.Files
 	if config.Mode == ModeBook {
 		files = listFilesByExt(dir, ".mp3")
 	}
 
-	prog := newProgressBar()
-	prog.Width = 48
-
 	m := &ProgressModel{
 		ctx:        ctx,
+		styles:     styles,
 		config:     config,
 		workers:    []string{},
 		logs:       []string{"Starting conversion..."},
 		updates:    make(chan tea.Msg, updatesBuffer),
-		progress:   prog,
+		bar:        styles.newBar(),
 		viewport:   viewport.New(80, 20),
-		help:       newHelpModel(),
+		help:       styles.newHelp(),
 		panelWidth: 80,
 	}
 	m.stepTotal[1] = len(files)
@@ -243,7 +221,7 @@ func (m *ProgressModel) Init() tea.Cmd {
 func (m *ProgressModel) SetSize(w, h int) {
 	m.width, m.height = w, h
 	m.panelWidth = max(40, w-2) // panel border is 2 columns
-	frameW, frameH := logBoxStyle().GetFrameSize()
+	frameW, frameH := m.styles.LogBox.GetFrameSize()
 	m.viewport.Width = max(1, w-frameW)
 	m.viewport.Height = max(1, h-frameH-2) // blank line + help
 	m.help.Width = w
@@ -286,9 +264,7 @@ func (m *ProgressModel) Update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case progress.FrameMsg:
-		progressModel, cmd := m.progress.Update(msg)
-		m.progress = progressModel.(progress.Model)
-		return cmd
+		return m.bar.Update(msg)
 
 	case msgLog:
 		m.logs = append(m.logs, msg.text)
@@ -312,11 +288,11 @@ func (m *ProgressModel) Update(msg tea.Msg) tea.Cmd {
 			m.stepDone[msg.step] = max(m.stepDone[msg.step], msg.completed)
 			m.stepTotal[msg.step] = msg.total
 		}
-		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(m.pct()))
+		return tea.Batch(waitForUpdate(m.updates), m.bar.SetPercent(m.pct()))
 
 	case msgStepAdvance:
 		m.currentStep = msg.step
-		return tea.Batch(waitForUpdate(m.updates), m.progress.SetPercent(m.pct()))
+		return tea.Batch(waitForUpdate(m.updates), m.bar.SetPercent(m.pct()))
 
 	case msgInitWorkers:
 		m.workers = make([]string, msg.count)
@@ -364,22 +340,21 @@ func (m *ProgressModel) FullHelp() [][]key.Binding { return [][]key.Binding{m.Sh
 
 func (m *ProgressModel) View() string {
 	if m.showFullLogs {
-		return lipgloss.JoinVertical(lipgloss.Left, logBoxStyle().Render(m.viewport.View()), "", m.help.View(m))
+		return lipgloss.JoinVertical(lipgloss.Left, m.styles.LogBox.Render(m.viewport.View()), "", m.help.View(m))
 	}
 
-	statusText := lipgloss.NewStyle().Foreground(warningColor).Render("Working...")
+	st := m.styles
+	statusText := st.Warning.Render("Working...")
 	if m.err != nil {
-		statusText = lipgloss.NewStyle().Foreground(errorColor).Render("Failed")
+		statusText = st.Error.Render("Failed")
 	} else if m.cancelled {
-		statusText = lipgloss.NewStyle().Foreground(errorColor).Render("Cancelled")
+		statusText = st.Error.Render("Cancelled")
 	} else if m.currentStep >= numPipelineSteps {
-		statusText = lipgloss.NewStyle().Foreground(successColor).Render("Complete")
+		statusText = st.Success.Render("Complete")
 	}
 
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(0, 1)
+	// A copy, since Width is set per panel below (see Styles).
+	panelStyle := st.Panel.Copy()
 
 	pct := m.pct()
 	step := min(m.currentStep+1, numPipelineSteps)
@@ -391,12 +366,11 @@ func (m *ProgressModel) View() string {
 
 	// Size the bar to whatever the label leaves on the line (panel padding is 2).
 	inner := m.panelWidth - panelStyle.GetHorizontalPadding()
-	bar := m.progress
-	bar.Width = max(10, inner-lipgloss.Width(label)-2)
+	bar := m.bar.ViewWidth(max(10, inner-lipgloss.Width(label)-2))
 	progressStr := panelStyle.Width(m.panelWidth).Render(
-		truncateText(bar.View()+"  "+label, inner))
+		truncateText(bar+"  "+label, inner))
 
-	bold := lipgloss.NewStyle().Bold(true)
+	bold := st.Bold
 	leftWidth := max(10, (m.panelWidth-4)/2) // panel Width, incl. padding
 	rightWidth := max(10, m.panelWidth-4-leftWidth)
 
@@ -431,13 +405,13 @@ func (m *ProgressModel) View() string {
 	}
 	for _, w := range shown {
 		if w == "Idle" {
-			workers = append(workers, "  "+lipgloss.NewStyle().Foreground(subtextColor).Render("Idle"))
+			workers = append(workers, "  "+st.Dim.Render("Idle"))
 		} else {
 			workers = append(workers, "  "+truncateText(w, leftInner-2))
 		}
 	}
 	if hidden := len(m.workers) - len(shown); hidden > 0 {
-		workers = append(workers, helpStyle().Render(fmt.Sprintf("  +%d more", hidden)))
+		workers = append(workers, st.Dim.Render(fmt.Sprintf("  +%d more", hidden)))
 	}
 	leftStr := panelStyle.Width(leftWidth).Render(lipgloss.JoinVertical(lipgloss.Left, workers...))
 
@@ -454,11 +428,11 @@ func (m *ProgressModel) View() string {
 	for i, s := range steps {
 		status := "[ ]"
 		if (m.cancelled || m.err != nil) && i == m.currentStep {
-			status = lipgloss.NewStyle().Foreground(errorColor).Render("[✗]")
+			status = st.Error.Render("[✗]")
 		} else if i < m.currentStep {
-			status = lipgloss.NewStyle().Foreground(successColor).Render("[✔]")
+			status = st.Success.Render("[✔]")
 		} else if i == m.currentStep {
-			status = lipgloss.NewStyle().Foreground(warningColor).Render("[❯]")
+			status = st.Warning.Render("[❯]")
 		}
 		checklist = append(checklist, truncateText(status+" "+s, rightInner))
 	}
@@ -472,13 +446,13 @@ func (m *ProgressModel) View() string {
 	var body []string
 	logTitle := bold.Render("CONVERSION LOGS (Press 'l' to expand)")
 	if m.err != nil {
-		logTitle = bold.Foreground(errorColor).Render("CONVERSION FAILED")
+		logTitle = st.Error.Copy().Bold(true).Render("CONVERSION FAILED")
 		for _, l := range strings.Split(m.err.Error(), "\n") {
-			body = append(body, lipgloss.NewStyle().Foreground(errorColor).Render(l))
+			body = append(body, st.Error.Render(l))
 		}
-		body = append(body, helpStyle().Render("If ffmpeg failed, its output is in fail-<time>.log in the book folder. Press 'l' for logs."))
+		body = append(body, st.Dim.Render("If ffmpeg failed, its output is in fail-<time>.log in the book folder. Press 'l' for logs."))
 	} else if m.succeeded() && len(m.outputs) > 0 {
-		logTitle = bold.Foreground(successColor).Render("DONE")
+		logTitle = st.Success.Copy().Bold(true).Render("DONE")
 		body = m.outputLines(logRows, logInner)
 	} else {
 		body = m.logs[max(0, len(m.logs)-logRows):]
@@ -510,8 +484,8 @@ func (m *ProgressModel) View() string {
 
 // outputLines lists the written files for the finish screen, in at most rows lines.
 func (m *ProgressModel) outputLines(rows, width int) []string {
-	ok := lipgloss.NewStyle().Foreground(successColor).Render("✔ ")
-	dim := lipgloss.NewStyle().Foreground(subtextColor)
+	ok := m.styles.Success.Render("✔ ")
+	dim := m.styles.Dim
 	if len(m.outputs) == 1 {
 		o := m.outputs[0]
 		lines := []string{ok + truncateLeft(o.path, width-2), "  " + dim.Render(o.summary())}

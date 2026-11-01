@@ -51,8 +51,9 @@ var dashKeys = struct {
 }
 
 type DashboardModel struct {
-	ctx context.Context
-	dir string
+	ctx    context.Context
+	styles *Styles
+	dir    string
 
 	// selection is the file manager's selection (absolute paths); nil means
 	// all MP3s in dir. A selection is always converted as stories.
@@ -87,15 +88,6 @@ type DashboardModel struct {
 	layout dashLayout
 }
 
-func (m *DashboardModel) updateThemeStyles() {
-	for i := range m.inputs {
-		applyInputStyles(&m.inputs[i])
-	}
-	applyInputStyles(&m.bitrateIn)
-	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
-	applyHelpStyles(&m.help.Styles)
-}
-
 const (
 	dashInputArtist = iota
 	dashInputAlbum
@@ -118,37 +110,35 @@ const (
 
 // newDashboardModel opens the converter for dir, or for selection (absolute
 // mp3 paths under dir) when it is not nil.
-func newDashboardModel(ctx context.Context, dir string, selection []string, mode ConversionMode, removeSource bool) *DashboardModel {
+func newDashboardModel(ctx context.Context, styles *Styles, dir string, selection []string, mode ConversionMode, removeSource bool) *DashboardModel {
 	if selection != nil {
 		mode = ModeStories
 	}
 	m := &DashboardModel{
 		ctx:          ctx,
+		styles:       styles,
 		dir:          dir,
 		selection:    selection,
 		mode:         mode,
 		removeSource: removeSource,
 		inputs:       make([]textinput.Model, 5),
-		help:         newHelpModel(),
+		help:         styles.newHelp(),
 		scanning:     true,
-		spinner:      spinner.New(spinner.WithSpinner(spinner.Dot)),
+		spinner:      styles.newSpinner(),
 	}
-	m.spinner.Style = lipgloss.NewStyle().Foreground(primaryColor)
 
 	for i := range m.inputs {
-		t := textinput.New()
+		t := styles.newInput()
 		t.Prompt = ""
 		t.CharLimit = 128
-		applyInputStyles(&t)
 		m.inputs[i] = t
 	}
 	m.applyPlaceholders()
-	m.bitrateIn = textinput.New()
+	m.bitrateIn = styles.newInput()
 	m.bitrateIn.Prompt = ""
 	m.bitrateIn.CharLimit = 3
 	m.bitrateIn.Width = 3
 	m.bitrateIn.Placeholder = "64"
-	applyInputStyles(&m.bitrateIn)
 
 	m.focusIndex = dashInputArtist
 	m.inputs[dashInputArtist].Focus()
@@ -786,13 +776,10 @@ func (m *DashboardModel) View() string {
 		} else {
 			msg = []string{fmt.Sprintf("%d of the .m4b files already exist.", len(existing)), "Overwrite them? (y/N)"}
 		}
-		dialogBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(errorColor).
-			Padding(1, 2).
+		dialogBox := m.styles.Dialog.Copy().
 			MaxWidth(m.width).
 			Render(lipgloss.JoinVertical(lipgloss.Center, append([]string{
-				lipgloss.NewStyle().Bold(true).Foreground(errorColor).Render("Output File Exists"), ""},
+				m.styles.DialogTitle.Render("Output File Exists"), ""},
 				msg...)...))
 
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialogBox)
@@ -800,16 +787,17 @@ func (m *DashboardModel) View() string {
 
 	lay := m.layout
 	stories := m.mode == ModeStories
-	dim := lipgloss.NewStyle().Foreground(subtextColor)
+	c := m.styles.Colors
+	dim := m.styles.Dim
 	// Every pane row is truncated (not wrapped) and padded to the content width.
 	padStyle := lipgloss.NewStyle().Width(lay.contentWidth)
 	row := func(s string) string { return padStyle.Render(truncateText(s, lay.contentWidth)) }
-	title := func(s string) string { return lipgloss.NewStyle().Bold(true).Render(s) }
+	title := m.styles.Bold.Render
 
 	paneStyle := func(active bool) lipgloss.Style {
-		border := secondaryColor
+		border := c.Secondary
 		if active {
-			border = primaryColor
+			border = c.Primary
 		}
 		return lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -832,7 +820,7 @@ func (m *DashboardModel) View() string {
 	}
 	focusPrefix := func(i int) string {
 		if m.focusIndex == i {
-			return lipgloss.NewStyle().Foreground(primaryColor).Render("> ")
+			return m.styles.Accent.Render("> ")
 		}
 		return "  "
 	}
@@ -933,7 +921,7 @@ func (m *DashboardModel) View() string {
 
 	notice := ""
 	if m.notice != "" {
-		notice = lipgloss.NewStyle().Foreground(warningColor).Render(truncateText(m.notice, m.width))
+		notice = m.styles.Warning.Render(truncateText(m.notice, m.width))
 	}
 	parts := []string{split, btnBlock.Render(buttons)}
 	switch {
@@ -954,20 +942,21 @@ func (m *DashboardModel) button(idx int, text string, on, enabled bool) string {
 	if focused {
 		text = "> " + text + " <"
 	}
+	c := m.styles.Colors
 	style := lipgloss.NewStyle().Padding(0, 2)
 	switch {
 	case !enabled:
-		style = style.Background(secondaryColor).Foreground(subtextColor)
+		style = style.Background(c.Secondary).Foreground(c.Subtext)
 	case on:
-		style = style.Background(primaryColor).Foreground(onPrimaryColor).Bold(true)
+		style = style.Background(c.Primary).Foreground(c.OnPrimary).Bold(true)
 	default:
-		style = style.Background(secondaryColor).Foreground(textColor)
+		style = style.Background(c.Secondary).Foreground(c.Text)
 	}
 	out := style.Render(text)
 	if !m.layout.compactButton {
-		frame := secondaryColor
+		frame := c.Secondary
 		if focused && enabled {
-			frame = primaryColor
+			frame = c.Primary
 		}
 		out = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(frame).Render(out)
 	}
@@ -982,7 +971,7 @@ func (m *DashboardModel) fileRows() []string {
 		if i == m.fileScroll.Cursor() {
 			prefix = "┃ "
 			if m.focusIndex == dashFileList {
-				prefix = lipgloss.NewStyle().Foreground(primaryColor).Render(prefix)
+				prefix = m.styles.Accent.Render(prefix)
 			}
 		}
 		rows = append(rows, prefix+truncateText(m.displayName(m.files[i]), m.layout.contentWidth-2))
@@ -1002,9 +991,9 @@ func (m *DashboardModel) coverRows() []string {
 		str := truncateText(fmt.Sprintf("%s%d. %s", mark, i+1, m.covers[i].label), m.layout.contentWidth)
 		switch {
 		case selected && m.focusIndex == dashCoverSelection:
-			str = lipgloss.NewStyle().Foreground(primaryColor).Render(str)
+			str = m.styles.Accent.Render(str)
 		case !selected:
-			str = lipgloss.NewStyle().Foreground(subtextColor).Render(str)
+			str = m.styles.Dim.Render(str)
 		}
 		rows = append(rows, str)
 	}
